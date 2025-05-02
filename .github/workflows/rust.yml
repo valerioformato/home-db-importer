@@ -75,4 +75,6 @@ jobs:
         uses: codecov/codecov-action@v3
         with:
           file: ./lcov.info
-          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false # Changed to false to prevent CI failure on upload error
+          verbose: true
