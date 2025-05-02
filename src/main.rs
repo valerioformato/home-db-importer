@@ -80,7 +80,7 @@ fn main() {
             url,
             org,
             bucket,
-            token,
+            token: _,
             time_column,
             time_format,
             measurement,
