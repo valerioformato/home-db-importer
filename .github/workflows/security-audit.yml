@@ -1,0 +1,34 @@
+name: Security Audit
+
+on:
+  schedule:
+    - cron: "0 0 * * 0" # Run once a week on Sunday at midnight
+  push:
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Install cargo-audit
+        uses: actions-rs/install@v0.1
+        with:
+          crate: cargo-audit
+          version: latest
+          use-tool-cache: true
+
+      - name: Run cargo-audit
+        uses: actions-rs/cargo@v1
+        with:
+          command: audit
