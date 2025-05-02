@@ -55,20 +55,24 @@ jobs:
       - uses: actions/checkout@v3
 
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
-          toolchain: stable
-          override: true
+          components: llvm-tools-preview
 
-      - name: Install cargo-tarpaulin
+      - name: Install grcov
+        run: cargo install grcov
+
+      - name: Generate coverage data
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config
-          cargo install cargo-tarpaulin
+          rustup component add llvm-tools-preview
+          export RUSTFLAGS="-Cinstrument-coverage"
+          export LLVM_PROFILE_FILE="profile-%p-%m.profraw"
+          cargo build
+          cargo test
+          grcov . --binary-path ./target/debug/ -s . -t lcov --branch --ignore-not-existing --ignore "/*" -o lcov.info
 
-      - name: Generate code coverage
-        run: cargo tarpaulin --verbose --workspace --out Xml
-
-      - name: Upload coverage to Codecov
+      - name: Upload coverage report to Codecov
         uses: codecov/codecov-action@v3
+        with:
+          file: ./lcov.info
+          fail_ci_if_error: true
