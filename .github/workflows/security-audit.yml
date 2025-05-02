@@ -11,14 +11,24 @@ on:
 jobs:
   audit:
     runs-on: default
-    container:
-      image: rust:1.76
-
     steps:
       - uses: actions/checkout@v3
 
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
       - name: Install cargo-audit
-        run: cargo install cargo-audit
+        uses: actions-rs/install@v0.1
+        with:
+          crate: cargo-audit
+          version: latest
+          use-tool-cache: true
 
       - name: Run cargo-audit
-        run: cargo audit
+        uses: actions-rs/cargo@v1
+        with:
+          command: audit
