@@ -1,4 +1,7 @@
 use clap::{Parser, Subcommand};
+mod csv_parser;
+use csv_parser::CsvParser;
+use std::process;
 
 #[derive(Parser)]
 #[command(author, version, about = "Import home data into InfluxDB", long_about = None)]
@@ -97,10 +100,18 @@ fn main() {
 
         Commands::Validate { source, details } => {
             println!("Validating CSV file: '{}'", source);
-            if details {
-                println!("Showing detailed information about the CSV structure");
+
+            let parser = CsvParser::new(&source);
+
+            match parser.validate(details) {
+                Ok(report) => {
+                    println!("{}", report);
+                }
+                Err(e) => {
+                    eprintln!("Validation error: {}", e);
+                    process::exit(1);
+                }
             }
-            // Add validation logic here
         }
 
         Commands::Init { output } => {
