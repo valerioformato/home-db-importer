@@ -105,7 +105,20 @@ fn main() {
             println!("  Time column: {} (format: {})", time_column, time_format);
             println!("  Header rows: {}", header_rows);
 
-            // Add your CSV parsing and InfluxDB import logic here
+            // Create parser with the specified header rows
+            let parser = CsvParser::new(&source).with_header_rows(header_rows);
+
+            // Show a preview of the data before importing
+            match parser.format_parsed_data() {
+                Ok(preview) => {
+                    println!("\nPreview of data to be imported:\n{}", preview);
+                    // Add your InfluxDB import logic here
+                }
+                Err(e) => {
+                    eprintln!("Error parsing CSV data: {}", e);
+                    process::exit(1);
+                }
+            }
         }
 
         Commands::Validate {

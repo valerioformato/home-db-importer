@@ -44,6 +44,12 @@ impl CsvParser {
         self
     }
 
+    /// Gets the number of header rows
+    #[allow(dead_code)]
+    pub fn header_rows(&self) -> usize {
+        self.header_rows
+    }
+
     /// Checks if the file exists
     pub fn file_exists(&self) -> bool {
         Path::new(&self.file_path).exists()
@@ -171,6 +177,46 @@ impl CsvParser {
         }
 
         Ok(records)
+    }
+
+    /// Generates a formatted string representation of the parsed CSV data
+    #[allow(dead_code)]
+    pub fn format_parsed_data(&self) -> Result<String, Box<dyn Error>> {
+        let records = self.parse()?;
+
+        if records.is_empty() {
+            return Ok("No data found in CSV file.".to_string());
+        }
+
+        let mut output = String::new();
+        output.push_str(&format!(
+            "Found {} records with {} columns\n",
+            records.len(),
+            records[0].headers.len()
+        ));
+        output.push_str("Headers: ");
+        output.push_str(&records[0].headers.join(", "));
+        output.push_str("\n\nSample data:\n");
+
+        // Show up to 5 records as samples
+        let sample_size = std::cmp::min(5, records.len());
+        for (i, record) in records.iter().take(sample_size).enumerate() {
+            output.push_str(&format!("\nRecord {}:\n", i + 1));
+            for header in &record.headers {
+                if let Some(value) = record.values.get(header) {
+                    output.push_str(&format!("  {}: {}\n", header, value));
+                }
+            }
+        }
+
+        if records.len() > sample_size {
+            output.push_str(&format!(
+                "\n... and {} more records\n",
+                records.len() - sample_size
+            ));
+        }
+
+        Ok(output)
     }
 
     /// Validates a CSV file and returns a formatted report
