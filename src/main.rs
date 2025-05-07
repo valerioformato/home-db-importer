@@ -53,6 +53,10 @@ enum Commands {
         /// Measurement name in InfluxDB
         #[arg(short, long, required = true)]
         measurement: String,
+
+        /// Number of header rows in CSV file
+        #[arg(long, default_value = "1")]
+        header_rows: usize,
     },
 
     /// Validate a CSV file format without importing
@@ -64,6 +68,10 @@ enum Commands {
         /// Show detailed information about the CSV structure
         #[arg(short, long)]
         details: bool,
+
+        /// Number of header rows in CSV file
+        #[arg(long, default_value = "1")]
+        header_rows: usize,
     },
 
     /// Generate a template configuration file
@@ -87,6 +95,7 @@ fn main() {
             time_column,
             time_format,
             measurement,
+            header_rows,
         } => {
             println!("Importing data from '{}' into InfluxDB", source);
             println!("  URL: {}", url);
@@ -94,14 +103,28 @@ fn main() {
             println!("  Bucket: {}", bucket);
             println!("  Measurement: {}", measurement);
             println!("  Time column: {} (format: {})", time_column, time_format);
+            println!("  Header rows: {}", header_rows);
 
             // Add your CSV parsing and InfluxDB import logic here
         }
 
-        Commands::Validate { source, details } => {
+        Commands::Validate {
+            source,
+            details,
+            header_rows,
+        } => {
             println!("Validating CSV file: '{}'", source);
+            println!("  Header rows: {}", header_rows);
 
-            let parser = CsvParser::new(&source);
+            // Show information about the details flag
+            if details {
+                println!("Details mode: ON - Will show all CSV records");
+            } else {
+                println!("Details mode: OFF - Use --details flag to see full CSV content");
+            }
+
+            // Create parser with specified number of header rows
+            let parser = CsvParser::new(&source).with_header_rows(header_rows);
 
             match parser.validate(details) {
                 Ok(report) => {
