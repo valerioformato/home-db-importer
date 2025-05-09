@@ -8,8 +8,8 @@ use std::error::Error;
 /// Represents a client for connecting to InfluxDB
 pub struct InfluxClient {
     client: Client,
-    org: String,
-    bucket: String,
+    // org: String,
+    // bucket: String,
     dry_run: bool,
 }
 
@@ -28,25 +28,25 @@ pub struct DataPoint {
 
 impl InfluxClient {
     /// Creates a new InfluxDB client
-    pub fn new(url: &str, org: &str, bucket: &str, token: &str) -> Self {
+    pub fn new(url: &str, bucket: &str, token: &str) -> Self {
         let client = Client::new(url, bucket).with_token(token);
 
         InfluxClient {
             client,
-            org: org.to_string(),
-            bucket: bucket.to_string(),
+            // org: org.to_string(),
+            // bucket: bucket.to_string(),
             dry_run: false,
         }
     }
 
     /// Creates a new InfluxDB client in dry-run mode
-    pub fn new_dry_run(url: &str, org: &str, bucket: &str, token: &str) -> Self {
+    pub fn new_dry_run(url: &str, bucket: &str, token: &str) -> Self {
         let client = Client::new(url, bucket).with_token(token);
 
         InfluxClient {
             client,
-            org: org.to_string(),
-            bucket: bucket.to_string(),
+            // org: org.to_string(),
+            // bucket: bucket.to_string(),
             dry_run: true,
         }
     }
@@ -232,7 +232,6 @@ impl InfluxClient {
     pub async fn write_funds_records(
         &self,
         records: &[CsvRecord],
-        measurement: &str,
         time_column: &str,
         time_format: &str,
     ) -> Result<usize, Box<dyn Error>> {

@@ -33,6 +33,7 @@ impl CsvRecord {
     }
 
     /// Gets a measurement value for a specific column by name
+    #[allow(dead_code)]
     pub fn get_measurement_value(&self, column_name: &str) -> Option<&str> {
         if let Some(idx) = self.column_indexes.get(column_name) {
             if *idx < self.values.len() {
@@ -43,6 +44,7 @@ impl CsvRecord {
     }
 
     /// Gets all measurement columns (excluding the time column)
+    #[allow(dead_code)]
     pub fn get_measurement_columns(&self) -> Vec<&String> {
         self.column_indexes
             .keys()
@@ -100,6 +102,7 @@ impl CsvParser {
 
     /// Sets the column index to use as the timestamp
     /// Use None to indicate there is no timestamp column
+    #[allow(dead_code)]
     pub fn with_time_column_index(mut self, index: Option<usize>) -> Self {
         self.time_column_index = index;
         self
@@ -112,6 +115,7 @@ impl CsvParser {
     }
 
     /// Gets the time column index
+    #[allow(dead_code)]
     pub fn time_column_index(&self) -> Option<usize> {
         self.time_column_index
     }
@@ -255,6 +259,7 @@ impl CsvParser {
     }
 
     /// Generates a formatted string representation of the parsed CSV data
+    #[allow(dead_code)]
     pub fn format_parsed_data(&self) -> Result<String, Box<dyn Error>> {
         let records = self.parse()?;
 
@@ -491,7 +496,6 @@ impl CsvParser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::File;
     use std::io::Write;
     use tempfile::NamedTempFile;
 

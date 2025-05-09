@@ -222,15 +222,10 @@ async fn main() {
                         println!("Dry-run mode enabled. No data will be written to InfluxDB.");
 
                         // Create InfluxDB client in dry-run mode
-                        let influx_client = InfluxClient::new_dry_run(&url, &org, &bucket, &token);
+                        let influx_client = InfluxClient::new_dry_run(&url, &bucket, &token);
 
                         match influx_client
-                            .write_funds_records(
-                                &filtered_records,
-                                &measurement,
-                                &time_column,
-                                &time_format,
-                            )
+                            .write_funds_records(&filtered_records, &time_column, &time_format)
                             .await
                         {
                             Ok(count) => {
@@ -246,15 +241,10 @@ async fn main() {
                         }
                     } else {
                         // Create InfluxDB client and import the data
-                        let influx_client = InfluxClient::new(&url, &org, &bucket, &token);
+                        let influx_client = InfluxClient::new(&url, &bucket, &token);
 
                         match influx_client
-                            .write_funds_records(
-                                &filtered_records,
-                                &measurement,
-                                &time_column,
-                                &time_format,
-                            )
+                            .write_funds_records(&filtered_records, &time_column, &time_format)
                             .await
                         {
                             Ok(count) => {

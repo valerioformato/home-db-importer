@@ -59,7 +59,7 @@ fn create_sample_csv_record() -> CsvRecord {
 // Just test the conversion functionality, which is synchronous
 #[test]
 fn test_convert_funds_record() {
-    let client = InfluxClient::new("http://localhost:8086", "org", "bucket", "token");
+    let client = InfluxClient::new("http://localhost:8086", "bucket", "token");
     let record = create_sample_csv_record();
 
     let result = client.convert_funds_record(&record, "timestamp", "%Y-%m-%d %H:%M:%S");
@@ -101,7 +101,7 @@ fn test_convert_funds_record() {
 
 #[test]
 fn test_convert_funds_record_with_invalid_timestamp() {
-    let client = InfluxClient::new("http://localhost:8086", "org", "bucket", "token");
+    let client = InfluxClient::new("http://localhost:8086", "bucket", "token");
 
     // Create a record with an invalid timestamp format
     let mut record = create_sample_csv_record();
@@ -116,7 +116,7 @@ fn test_convert_funds_record_with_invalid_timestamp() {
 
 #[test]
 fn test_convert_funds_record_with_non_numeric_values() {
-    let client = InfluxClient::new("http://localhost:8086", "org", "bucket", "token");
+    let client = InfluxClient::new("http://localhost:8086", "bucket", "token");
 
     // Create a record with non-numeric values
     let mut record = create_sample_csv_record();
@@ -141,7 +141,7 @@ fn test_convert_funds_record_with_non_numeric_values() {
 #[test]
 fn test_dry_run_mode() {
     // Create a client in dry-run mode
-    let client = InfluxClient::new_dry_run("http://localhost:8086", "org", "bucket", "token");
+    let client = InfluxClient::new_dry_run("http://localhost:8086", "bucket", "token");
     // Test that the client was created with dry_run flag set
     // We can only test this indirectly in the unit tests
 
@@ -158,7 +158,7 @@ fn test_dry_run_mode() {
 #[test]
 fn test_write_points_dry_run() {
     // Create a client in dry-run mode
-    let client = InfluxClient::new_dry_run("http://localhost:8086", "org", "bucket", "token");
+    let client = InfluxClient::new_dry_run("http://localhost:8086", "bucket", "token");
 
     // Create sample data points
     let points = vec![

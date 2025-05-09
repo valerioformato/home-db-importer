@@ -21,7 +21,7 @@ fn create_test_point(measurement: &str, value: f64, timestamp: &str) -> DataPoin
 #[tokio::test]
 async fn test_dry_run_write_point() {
     // Create a client in dry-run mode
-    let client = InfluxClient::new_dry_run("http://localhost:8086", "org", "bucket", "token");
+    let client = InfluxClient::new_dry_run("http://localhost:8086", "bucket", "token");
 
     // Create a sample data point
     let data_point = create_test_point("test_measurement", 42.0, "2023-01-15 10:00:00");
@@ -35,7 +35,7 @@ async fn test_dry_run_write_point() {
 #[tokio::test]
 async fn test_dry_run_write_points() {
     // Create a client in dry-run mode
-    let client = InfluxClient::new_dry_run("http://localhost:8086", "org", "bucket", "token");
+    let client = InfluxClient::new_dry_run("http://localhost:8086", "bucket", "token");
 
     // Create sample data points
     let points = vec![
