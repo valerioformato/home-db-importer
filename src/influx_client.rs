@@ -10,10 +10,11 @@ pub struct InfluxClient {
     client: Client,
     org: String,
     bucket: String,
+    dry_run: bool,
 }
 
 /// Represents a data point to be written to InfluxDB
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 pub struct DataPoint {
     /// The measurement name in InfluxDB
     pub measurement: String,
@@ -34,6 +35,19 @@ impl InfluxClient {
             client,
             org: org.to_string(),
             bucket: bucket.to_string(),
+            dry_run: false,
+        }
+    }
+
+    /// Creates a new InfluxDB client in dry-run mode
+    pub fn new_dry_run(url: &str, org: &str, bucket: &str, token: &str) -> Self {
+        let client = Client::new(url, bucket).with_token(token);
+
+        InfluxClient {
+            client,
+            org: org.to_string(),
+            bucket: bucket.to_string(),
+            dry_run: true,
         }
     }
 
@@ -86,9 +100,27 @@ impl InfluxClient {
                 continue;
             }
 
-            let value = &record.values[*col_idx];
+            let mut value = record.values[*col_idx].clone();
 
             // Try to convert column value to float
+
+            // first let's check if the value is a currency
+            if value.contains('$') || value.contains('€') {
+                // Remove the currency symbol and any commas
+                value = value
+                    .replace('$', "")
+                    .replace('€', "")
+                    .replace(',', "")
+                    .trim()
+                    .to_string();
+            }
+
+            // then let's check if the value is a percentage
+            if value.ends_with('%') {
+                // Remove the percentage symbol
+                value = value.trim_end_matches('%').to_string();
+            }
+
             match value.parse::<f64>() {
                 Ok(float_value) => {
                     // This column contains a numeric value - create a data point
@@ -96,7 +128,11 @@ impl InfluxClient {
 
                     // Extract tags from header rows for this column
                     let header_row = &record.header_values.first().unwrap();
-                    let header_value = &header_row[*col_idx];
+                    let header_value = &header_row[*col_idx]
+                        .replace(['\n', '\r'], " ")
+                        .replace(' ', "_")
+                        .replace("__", "_");
+
                     if !header_value.is_empty() {
                         tags.insert("fondo".to_string(), header_value.clone());
                     }
@@ -138,12 +174,42 @@ impl InfluxClient {
             write_query = write_query.add_tag(tag_name, tag_value);
         }
 
+        if self.dry_run {
+            println!("Dry-run mode: Would write point: {:?}", write_query);
+            return Ok("Dry-run mode: Point not written".to_string());
+        }
+
         self.client.query(write_query).await.map_err(|e| e.into())
     }
 
     /// Writes multiple data points to InfluxDB in a single request
     pub async fn write_points(&self, points: &[DataPoint]) -> Result<(), Box<dyn Error>> {
         if points.is_empty() {
+            return Ok(());
+        }
+
+        if self.dry_run {
+            println!(
+                "Dry-run mode: Would write {} points to InfluxDB",
+                points.len()
+            );
+            for (i, point) in points.iter().enumerate() {
+                // Limit the number of points to display in dry-run mode
+                if i >= 10 && points.len() > 20 {
+                    println!("... and {} more points (not shown)", points.len() - 10);
+                    break;
+                }
+
+                // Create a write query for the data point to display
+                let mut write_query = Timestamp::from(point.time)
+                    .into_query(&point.measurement)
+                    .add_field("value", point.field_value);
+                for (tag_name, tag_value) in point.tags.clone() {
+                    write_query = write_query.add_tag(tag_name, tag_value);
+                }
+
+                println!("[{}/{}] Query: {:?}", i + 1, points.len(), write_query);
+            }
             return Ok(());
         }
 
@@ -182,7 +248,15 @@ impl InfluxClient {
             }
         }
 
-        println!("Writing {} data points to InfluxDB", all_points.len());
+        if self.dry_run {
+            println!(
+                "Dry-run mode: Would write {} data points to InfluxDB",
+                all_points.len()
+            );
+        } else {
+            println!("Writing {} data points to InfluxDB", all_points.len());
+        }
+
         self.write_points(&all_points).await?;
 
         if error_count > 0 {

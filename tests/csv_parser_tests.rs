@@ -60,9 +60,16 @@ fn test_parser_with_single_header_row() {
 
     // First record should have values from the first data row
     let first_record = &records[0];
-    assert_eq!(first_record.values.get("name").unwrap(), "John");
-    assert_eq!(first_record.values.get("age").unwrap(), "30");
-    assert_eq!(first_record.values.get("city").unwrap(), "New York");
+
+    // Find the column indices
+    let name_idx = first_record.column_indexes.get("name").unwrap();
+    let age_idx = first_record.column_indexes.get("age").unwrap();
+    let city_idx = first_record.column_indexes.get("city").unwrap();
+
+    // Check values using indices
+    assert_eq!(first_record.values[*name_idx], "John");
+    assert_eq!(first_record.values[*age_idx], "30");
+    assert_eq!(first_record.values[*city_idx], "New York");
 }
 
 #[test]
@@ -81,9 +88,14 @@ fn test_parser_with_multi_header_rows() {
 
     // Check that the headers were properly combined
     let first_record = &records[0];
-    assert_eq!(first_record.values.get("sensor.temp").unwrap(), "22.5");
-    assert_eq!(first_record.values.get("sensor.humidity").unwrap(), "45");
-    assert_eq!(first_record.values.get("sensor.pressure").unwrap(), "1013");
+
+    let temp_idx = first_record.column_indexes.get("sensor.temp").unwrap();
+    let humidity_idx = first_record.column_indexes.get("sensor.humidity").unwrap();
+    let pressure_idx = first_record.column_indexes.get("sensor.pressure").unwrap();
+
+    assert_eq!(first_record.values[*temp_idx], "22.5");
+    assert_eq!(first_record.values[*humidity_idx], "45");
+    assert_eq!(first_record.values[*pressure_idx], "1013");
 }
 
 #[test]
@@ -102,9 +114,14 @@ fn test_header_with_spaces() {
 
     // Check that spaces in headers were replaced with underscores
     let first_record = &records[0];
-    assert_eq!(first_record.values.get("First_Name").unwrap(), "John");
-    assert_eq!(first_record.values.get("Last_Name").unwrap(), "Doe");
-    assert_eq!(first_record.values.get("Home_City").unwrap(), "New York");
+
+    let first_name_idx = first_record.column_indexes.get("First_Name").unwrap();
+    let last_name_idx = first_record.column_indexes.get("Last_Name").unwrap();
+    let home_city_idx = first_record.column_indexes.get("Home_City").unwrap();
+
+    assert_eq!(first_record.values[*first_name_idx], "John");
+    assert_eq!(first_record.values[*last_name_idx], "Doe");
+    assert_eq!(first_record.values[*home_city_idx], "New York");
 }
 
 #[test]
@@ -206,6 +223,7 @@ fn test_format_parsed_data() {
     let test_file = create_test_csv(content);
     let parser = CsvParser::new(test_file.path.to_str().unwrap());
 
+    let parse_result = parser.parse().unwrap();
     let result = parser.format_parsed_data();
     assert!(result.is_ok());
 

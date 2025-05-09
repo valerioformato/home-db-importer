@@ -160,6 +160,7 @@ impl CsvParser {
                 // If all parts were empty, use a default column name
                 format!("column_{}", col + 1)
             } else {
+                // Join parts in a deterministic order (just as they appear in the CSV)
                 parts.join(".")
             };
 
@@ -253,7 +254,6 @@ impl CsvParser {
     }
 
     /// Generates a formatted string representation of the parsed CSV data
-    #[allow(dead_code)]
     pub fn format_parsed_data(&self) -> Result<String, Box<dyn Error>> {
         let records = self.parse()?;
 
@@ -618,14 +618,12 @@ mod tests {
 
         // Check that the headers were correctly processed
         assert_eq!(records.len(), 2);
-        assert_eq!(
-            records[0]
-                .column_indexes
-                .keys()
-                .cloned()
-                .collect::<Vec<_>>(),
-            vec!["First.Sub1", "Sub2", "Third.Sub3"]
-        );
+
+        // Collect and sort headers to ensure consistent order for testing
+        let mut headers: Vec<_> = records[0].column_indexes.keys().cloned().collect();
+        headers.sort();
+
+        assert_eq!(headers, vec!["First.Sub1", "Sub2", "Third.Sub3"]);
 
         // Check that the values were correctly assigned
         assert_eq!(

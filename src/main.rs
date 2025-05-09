@@ -59,6 +59,10 @@ enum Commands {
         /// Number of header rows in CSV file
         #[arg(long, default_value = "1")]
         header_rows: usize,
+
+        /// Run in dry-run mode (don't write to InfluxDB, just show queries)
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Validate a CSV file format without importing
@@ -99,6 +103,7 @@ async fn main() {
             time_format,
             measurement,
             header_rows,
+            dry_run,
         } => {
             println!("Importing data from '{}' into InfluxDB", source);
             println!("  URL: {}", url);
@@ -107,6 +112,7 @@ async fn main() {
             println!("  Measurement: {}", measurement);
             println!("  Time column: {} (format: {})", time_column, time_format);
             println!("  Header rows: {}", header_rows);
+            println!("  Dry-run mode: {}", if dry_run { "ON" } else { "OFF" });
 
             // Create parser with the specified header rows
             let parser = CsvParser::new(&source).with_header_rows(header_rows);
@@ -126,19 +132,39 @@ async fn main() {
                         }
                     }
 
-                    // Create InfluxDB client and import the data
-                    let influx_client = InfluxClient::new(&url, &org, &bucket, &token);
+                    if dry_run {
+                        println!("Dry-run mode enabled. No data will be written to InfluxDB.");
 
-                    match influx_client
-                        .write_funds_records(&records, &measurement, &time_column, &time_format)
-                        .await
-                    {
-                        Ok(count) => {
-                            println!("Successfully imported {} data points to InfluxDB", count);
+                        // Create InfluxDB client in dry-run mode
+                        let influx_client = InfluxClient::new_dry_run(&url, &org, &bucket, &token);
+
+                        match influx_client
+                            .write_funds_records(&records, &measurement, &time_column, &time_format)
+                            .await
+                        {
+                            Ok(count) => {
+                                println!("Dry run complete: {} data points would have been sent to InfluxDB", count);
+                            }
+                            Err(e) => {
+                                eprintln!("Error in dry-run: {}", e);
+                                process::exit(1);
+                            }
                         }
-                        Err(e) => {
-                            eprintln!("Error writing to InfluxDB: {}", e);
-                            process::exit(1);
+                    } else {
+                        // Create InfluxDB client and import the data
+                        let influx_client = InfluxClient::new(&url, &org, &bucket, &token);
+
+                        match influx_client
+                            .write_funds_records(&records, &measurement, &time_column, &time_format)
+                            .await
+                        {
+                            Ok(count) => {
+                                println!("Successfully imported {} data points to InfluxDB", count);
+                            }
+                            Err(e) => {
+                                eprintln!("Error writing to InfluxDB: {}", e);
+                                process::exit(1);
+                            }
                         }
                     }
                 }
