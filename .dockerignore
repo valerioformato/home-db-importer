@@ -1,0 +1,10 @@
+target/
+.git/
+.github/
+.gitignore
+README.md
+*.md
+.dockerignore
+Dockerfile
+docker-compose.yml
+.import_state.json

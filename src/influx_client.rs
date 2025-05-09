@@ -108,9 +108,7 @@ impl InfluxClient {
             if value.contains('$') || value.contains('€') {
                 // Remove the currency symbol and any commas
                 value = value
-                    .replace('$', "")
-                    .replace('€', "")
-                    .replace(',', "")
+                    .replace(['$', '€', ','], "")
                     .trim()
                     .to_string();
             }
@@ -148,7 +146,7 @@ impl InfluxClient {
                         &record.header_values[1][*col_idx]
                     } else {
                         // Use column name as fallback if header information is not available
-                        col_name.split('.').last().unwrap_or(col_name)
+                        col_name.split('.').next_back().unwrap_or(col_name)
                     };
 
                     // Create the data point
