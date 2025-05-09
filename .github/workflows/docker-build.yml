@@ -13,7 +13,7 @@ on:
 
 env:
   # Docker Hub repository name (username/repo)
-  IMAGE_NAME: username/home-db-importer
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/home-db-importer
 
 jobs:
   build:
