@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 mod csv_parser;
+mod influx_client;
 use csv_parser::CsvParser;
+use influx_client::InfluxClient;
 use std::process;
 
 #[derive(Parser)]
@@ -82,7 +84,8 @@ enum Commands {
     },
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
@@ -91,7 +94,7 @@ fn main() {
             url,
             org,
             bucket,
-            token: _,
+            token,
             time_column,
             time_format,
             measurement,
@@ -108,11 +111,36 @@ fn main() {
             // Create parser with the specified header rows
             let parser = CsvParser::new(&source).with_header_rows(header_rows);
 
-            // Show a preview of the data before importing
-            match parser.format_parsed_data() {
-                Ok(preview) => {
-                    println!("\nPreview of data to be imported:\n{}", preview);
-                    // Add your InfluxDB import logic here
+            // Parse the CSV data
+            match parser.parse() {
+                Ok(records) => {
+                    println!("Successfully parsed {} records", records.len());
+
+                    // Show a preview of the data before importing
+                    match parser.format_parsed_data() {
+                        Ok(preview) => {
+                            println!("\nPreview of data to be imported:\n{}", preview);
+                        }
+                        Err(e) => {
+                            eprintln!("Error generating preview: {}", e);
+                        }
+                    }
+
+                    // Create InfluxDB client and import the data
+                    let influx_client = InfluxClient::new(&url, &org, &bucket, &token);
+
+                    match influx_client
+                        .write_funds_records(&records, &measurement, &time_column, &time_format)
+                        .await
+                    {
+                        Ok(count) => {
+                            println!("Successfully imported {} data points to InfluxDB", count);
+                        }
+                        Err(e) => {
+                            eprintln!("Error writing to InfluxDB: {}", e);
+                            process::exit(1);
+                        }
+                    }
                 }
                 Err(e) => {
                     eprintln!("Error parsing CSV data: {}", e);

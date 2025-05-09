@@ -1,0 +1,194 @@
+use crate::csv_parser::CsvRecord;
+use chrono::{DateTime, NaiveDateTime, Utc};
+use influxdb::{Client, InfluxDbWriteable, Timestamp, WriteQuery};
+use serde::Serialize;
+use std::collections::HashMap;
+use std::error::Error;
+
+/// Represents a client for connecting to InfluxDB
+pub struct InfluxClient {
+    client: Client,
+    org: String,
+    bucket: String,
+}
+
+/// Represents a data point to be written to InfluxDB
+#[derive(Serialize, Clone)]
+pub struct DataPoint {
+    /// The measurement name in InfluxDB
+    pub measurement: String,
+    /// The timestamp for the data point
+    pub time: DateTime<Utc>,
+    /// The tag set for the data point
+    pub tags: HashMap<String, String>,
+    /// The field set for the data point
+    pub field_value: f64,
+}
+
+impl InfluxClient {
+    /// Creates a new InfluxDB client
+    pub fn new(url: &str, org: &str, bucket: &str, token: &str) -> Self {
+        let client = Client::new(url, bucket).with_token(token);
+
+        InfluxClient {
+            client,
+            org: org.to_string(),
+            bucket: bucket.to_string(),
+        }
+    }
+
+    /// Converts a CSV record to multiple InfluxDB data points
+    /// Each column (except the timestamp column) becomes a separate measurement
+    /// To be used for funds records
+    pub fn convert_funds_record(
+        &self,
+        record: &CsvRecord,
+        time_column: &str,
+        time_format: &str,
+    ) -> Result<Vec<DataPoint>, Box<dyn Error>> {
+        assert!(
+            record.header_values.len() == 2,
+            "There should be two header rows"
+        );
+
+        let mut data_points = Vec::new();
+
+        // Get the timestamp value from the specified column
+        let time_column_index = match record.column_indexes.get(time_column) {
+            Some(idx) => *idx,
+            None => return Err(format!("Time column '{}' not found", time_column).into()),
+        };
+
+        // Ensure the time column index is valid
+        if time_column_index >= record.values.len() {
+            return Err(format!("Time column index {} out of bounds", time_column_index).into());
+        }
+
+        // Parse the timestamp value
+        let time_value = &record.values[time_column_index];
+        let naive_dt = match NaiveDateTime::parse_from_str(time_value, time_format) {
+            Ok(dt) => dt,
+            Err(e) => {
+                return Err(format!("Failed to parse timestamp '{}': {}", time_value, e).into())
+            }
+        };
+        let timestamp = DateTime::from_naive_utc_and_offset(naive_dt, Utc);
+
+        // Process each column (except timestamp) as a separate measurement
+        for (col_name, col_idx) in &record.column_indexes {
+            // Skip the timestamp column
+            if col_name == time_column {
+                continue;
+            }
+
+            // Skip columns with invalid indices
+            if *col_idx >= record.values.len() {
+                continue;
+            }
+
+            let value = &record.values[*col_idx];
+
+            // Try to convert column value to float
+            match value.parse::<f64>() {
+                Ok(float_value) => {
+                    // This column contains a numeric value - create a data point
+                    let mut tags = HashMap::new();
+
+                    // Extract tags from header rows for this column
+                    let header_row = &record.header_values.first().unwrap();
+                    let header_value = &header_row[*col_idx];
+                    if !header_value.is_empty() {
+                        tags.insert("fondo".to_string(), header_value.clone());
+                    }
+
+                    // Extract measurement from the second header row
+                    let header_row = &record.header_values.last().unwrap();
+                    let measurement = &header_row[*col_idx];
+
+                    // Create the data point
+                    data_points.push(DataPoint {
+                        measurement: measurement.to_string(),
+                        time: timestamp,
+                        tags,
+                        field_value: float_value,
+                    });
+                }
+                Err(_) => {
+                    // Non-numeric values could be skipped or handled differently
+                    // For now, we'll just skip them
+                    continue;
+                }
+            }
+        }
+
+        if data_points.is_empty() {
+            return Err("No valid measurements found in record".into());
+        }
+
+        Ok(data_points)
+    }
+
+    /// Writes a data point to InfluxDB
+    pub async fn write_point(&self, point: DataPoint) -> Result<String, Box<dyn Error>> {
+        // Create a write query for the data point
+        let mut write_query = Timestamp::from(point.time)
+            .into_query(point.measurement)
+            .add_field("value", point.field_value);
+        for (tag_name, tag_value) in point.tags {
+            write_query = write_query.add_tag(tag_name, tag_value);
+        }
+
+        self.client.query(write_query).await.map_err(|e| e.into())
+    }
+
+    /// Writes multiple data points to InfluxDB in a single request
+    pub async fn write_points(&self, points: &[DataPoint]) -> Result<(), Box<dyn Error>> {
+        if points.is_empty() {
+            return Ok(());
+        }
+
+        for point in points {
+            if let Err(e) = self.write_point(point.clone()).await {
+                eprintln!("Error writing point: {}", e);
+                return Err(e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Process and write all CSV records to InfluxDB
+    pub async fn write_funds_records(
+        &self,
+        records: &[CsvRecord],
+        measurement: &str,
+        time_column: &str,
+        time_format: &str,
+    ) -> Result<usize, Box<dyn Error>> {
+        let mut all_points = Vec::new();
+        let mut error_count = 0;
+        let mut success_count = 0;
+
+        for record in records {
+            match self.convert_funds_record(record, time_column, time_format) {
+                Ok(points) => {
+                    success_count += points.len();
+                    all_points.extend(points);
+                }
+                Err(e) => {
+                    eprintln!("Error converting record: {}", e);
+                    error_count += 1;
+                }
+            }
+        }
+
+        println!("Writing {} data points to InfluxDB", all_points.len());
+        self.write_points(&all_points).await?;
+
+        if error_count > 0 {
+            eprintln!("Failed to convert {} records", error_count);
+        }
+
+        Ok(success_count)
+    }
+}
