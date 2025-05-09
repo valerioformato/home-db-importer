@@ -1,6 +1,6 @@
 use crate::csv_parser::CsvRecord;
 use chrono::{DateTime, NaiveDateTime, Utc};
-use influxdb::{Client, InfluxDbWriteable, Timestamp, WriteQuery};
+use influxdb::{Client, InfluxDbWriteable, Timestamp};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::error::Error;
