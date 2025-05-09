@@ -107,10 +107,7 @@ impl InfluxClient {
             // first let's check if the value is a currency
             if value.contains('$') || value.contains('€') {
                 // Remove the currency symbol and any commas
-                value = value
-                    .replace(['$', '€', ','], "")
-                    .trim()
-                    .to_string();
+                value = value.replace(['$', '€', ','], "").trim().to_string();
             }
 
             // then let's check if the value is a percentage
