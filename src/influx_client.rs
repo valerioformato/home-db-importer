@@ -127,19 +127,29 @@ impl InfluxClient {
                     let mut tags = HashMap::new();
 
                     // Extract tags from header rows for this column
-                    let header_row = &record.header_values.first().unwrap();
-                    let header_value = &header_row[*col_idx]
-                        .replace(['\n', '\r'], " ")
-                        .replace(' ', "_")
-                        .replace("__", "_");
+                    // Safely access the first header row and check if column index is valid
+                    if !record.header_values.is_empty() && *col_idx < record.header_values[0].len()
+                    {
+                        let header_value = &record.header_values[0][*col_idx]
+                            .replace(['\n', '\r'], " ")
+                            .replace(' ', "_")
+                            .replace("__", "_");
 
-                    if !header_value.is_empty() {
-                        tags.insert("fondo".to_string(), header_value.clone());
+                        if !header_value.is_empty() {
+                            tags.insert("fondo".to_string(), header_value.clone());
+                        }
                     }
 
                     // Extract measurement from the second header row
-                    let header_row = &record.header_values.last().unwrap();
-                    let measurement = &header_row[*col_idx];
+                    // Safely access the last header row and check if column index is valid
+                    let measurement = if record.header_values.len() > 1
+                        && *col_idx < record.header_values[1].len()
+                    {
+                        &record.header_values[1][*col_idx]
+                    } else {
+                        // Use column name as fallback if header information is not available
+                        col_name.split('.').last().unwrap_or(col_name)
+                    };
 
                     // Create the data point
                     data_points.push(DataPoint {

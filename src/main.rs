@@ -23,7 +23,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Import data from a CSV file into InfluxDB
-    Import {
+    ImportFunds {
         /// The CSV file to import
         #[arg(short, long, required = true)]
         source: String,
@@ -66,7 +66,7 @@ enum Commands {
     },
 
     /// Validate a CSV file format without importing
-    Validate {
+    ValidateCSV {
         /// The CSV file to validate
         #[arg(short, long)]
         source: String,
@@ -93,7 +93,7 @@ async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Import {
+        Commands::ImportFunds {
             source,
             url,
             org,
@@ -105,7 +105,7 @@ async fn main() {
             header_rows,
             dry_run,
         } => {
-            println!("Importing data from '{}' into InfluxDB", source);
+            println!("Importing funds data from '{}' into InfluxDB", source);
             println!("  URL: {}", url);
             println!("  Organization: {}", org);
             println!("  Bucket: {}", bucket);
@@ -175,7 +175,7 @@ async fn main() {
             }
         }
 
-        Commands::Validate {
+        Commands::ValidateCSV {
             source,
             details,
             header_rows,

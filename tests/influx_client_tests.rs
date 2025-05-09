@@ -32,6 +32,7 @@ fn create_sample_csv_record() -> CsvRecord {
         column_indexes: HashMap::new(),
         header_values: vec![
             vec![
+                "timestamp".to_string(), // Add the timestamp column to header_values
                 "Fund A".to_string(),
                 "Fund A".to_string(),
                 "Fund B".to_string(),
@@ -83,10 +84,10 @@ fn test_convert_funds_record() {
     assert_eq!(nav_point.field_value, 15.3);
     assert_eq!(value_point.field_value, 20.1);
 
-    // Check tags
-    assert_eq!(price_point.tags.get("fondo").unwrap(), "Fund A");
-    assert_eq!(nav_point.tags.get("fondo").unwrap(), "Fund A");
-    assert_eq!(value_point.tags.get("fondo").unwrap(), "Fund B");
+    // Check tags - update to expect spaces replaced with underscores
+    assert_eq!(price_point.tags.get("fondo").unwrap(), "Fund_A");
+    assert_eq!(nav_point.tags.get("fondo").unwrap(), "Fund_A");
+    assert_eq!(value_point.tags.get("fondo").unwrap(), "Fund_B");
 
     // Check timestamps
     let expected_timestamp = DateTime::<Utc>::from_naive_utc_and_offset(
