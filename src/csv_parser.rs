@@ -13,6 +13,7 @@ pub struct CsvParser {
 }
 
 /// Represents a parsed CSV record
+#[derive(Clone, Debug)]
 pub struct CsvRecord {
     pub header_values: Vec<Vec<String>>, // Matrix of header values [row][column]
     pub column_indexes: HashMap<String, usize>, // Map column identifier to index

@@ -1,8 +1,11 @@
+use chrono::{DateTime, NaiveDateTime, Utc};
 use clap::{Parser, Subcommand};
 mod csv_parser;
 mod influx_client;
+mod state_management;
 use csv_parser::CsvParser;
 use influx_client::InfluxClient;
+use state_management::{load_import_state, save_import_state};
 use std::process;
 
 #[derive(Parser)]
@@ -63,6 +66,14 @@ enum Commands {
         /// Run in dry-run mode (don't write to InfluxDB, just show queries)
         #[arg(long)]
         dry_run: bool,
+
+        /// State file to track last imported timestamp
+        #[arg(long, default_value = ".import_state.json")]
+        state_file: String,
+
+        /// Force import all records, ignoring state file
+        #[arg(long)]
+        force_all: bool,
     },
 
     /// Validate a CSV file format without importing
@@ -104,6 +115,8 @@ async fn main() {
             measurement,
             header_rows,
             dry_run,
+            state_file,
+            force_all,
         } => {
             println!("Importing funds data from '{}' into InfluxDB", source);
             println!("  URL: {}", url);
@@ -113,6 +126,23 @@ async fn main() {
             println!("  Time column: {} (format: {})", time_column, time_format);
             println!("  Header rows: {}", header_rows);
             println!("  Dry-run mode: {}", if dry_run { "ON" } else { "OFF" });
+            println!("  State file: {}", state_file);
+
+            // Load the import state
+            let mut import_state = load_import_state(&state_file, &source);
+
+            if force_all {
+                println!("Force import all records (--force-all flag is set)");
+                import_state.last_imported_timestamp = None;
+            } else if let Some(timestamp) = import_state.last_imported_timestamp {
+                println!("Skipping records before: {}", timestamp);
+                println!(
+                    "Previously imported: {} records",
+                    import_state.records_imported
+                );
+            } else {
+                println!("No previous import state found, importing all records");
+            }
 
             // Create parser with the specified header rows
             let parser = CsvParser::new(&source).with_header_rows(header_rows);
@@ -122,13 +152,69 @@ async fn main() {
                 Ok(records) => {
                     println!("Successfully parsed {} records", records.len());
 
-                    // Show a preview of the data before importing
-                    match parser.format_parsed_data() {
-                        Ok(preview) => {
-                            println!("\nPreview of data to be imported:\n{}", preview);
-                        }
-                        Err(e) => {
-                            eprintln!("Error generating preview: {}", e);
+                    // Filter records based on timestamp
+                    let filtered_records = if let Some(last_ts) =
+                        import_state.last_imported_timestamp
+                    {
+                        let filtered = records
+                            .iter()
+                            .filter(|record| {
+                                // Only include records with timestamp greater than last imported
+                                if let Some(time_idx) = record.column_indexes.get(&time_column) {
+                                    if let Some(time_value) = record.values.get(*time_idx) {
+                                        if let Ok(naive_dt) =
+                                            NaiveDateTime::parse_from_str(time_value, &time_format)
+                                        {
+                                            let record_time: DateTime<Utc> =
+                                                DateTime::from_naive_utc_and_offset(naive_dt, Utc);
+                                            return record_time > last_ts;
+                                        }
+                                    }
+                                }
+                                // If timestamp can't be parsed, include the record to be safe
+                                true
+                            })
+                            .cloned()
+                            .collect::<Vec<_>>();
+
+                        println!(
+                            "Filtered from {} to {} records (skipping previously imported)",
+                            records.len(),
+                            filtered.len()
+                        );
+                        filtered
+                    } else {
+                        records.clone()
+                    };
+
+                    if filtered_records.is_empty() {
+                        println!("No new records to import");
+                        return;
+                    }
+
+                    // Show a preview of the filtered data before importing
+                    println!(
+                        "\nPreview of data to be imported: {} records",
+                        filtered_records.len()
+                    );
+
+                    // Try to find the latest timestamp from the records we're about to import
+                    let mut latest_timestamp: Option<DateTime<Utc>> = None;
+                    for record in &filtered_records {
+                        if let Some(time_idx) = record.column_indexes.get(&time_column) {
+                            if let Some(time_value) = record.values.get(*time_idx) {
+                                if let Ok(naive_dt) =
+                                    NaiveDateTime::parse_from_str(time_value, &time_format)
+                                {
+                                    let record_time =
+                                        DateTime::from_naive_utc_and_offset(naive_dt, Utc);
+                                    if latest_timestamp.is_none()
+                                        || Some(record_time) > latest_timestamp
+                                    {
+                                        latest_timestamp = Some(record_time);
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -139,11 +225,19 @@ async fn main() {
                         let influx_client = InfluxClient::new_dry_run(&url, &org, &bucket, &token);
 
                         match influx_client
-                            .write_funds_records(&records, &measurement, &time_column, &time_format)
+                            .write_funds_records(
+                                &filtered_records,
+                                &measurement,
+                                &time_column,
+                                &time_format,
+                            )
                             .await
                         {
                             Ok(count) => {
                                 println!("Dry run complete: {} data points would have been sent to InfluxDB", count);
+
+                                // Update the import state but don't save it in dry run mode
+                                println!("In a real import, would update the state file with latest timestamp: {:?}", latest_timestamp);
                             }
                             Err(e) => {
                                 eprintln!("Error in dry-run: {}", e);
@@ -155,11 +249,30 @@ async fn main() {
                         let influx_client = InfluxClient::new(&url, &org, &bucket, &token);
 
                         match influx_client
-                            .write_funds_records(&records, &measurement, &time_column, &time_format)
+                            .write_funds_records(
+                                &filtered_records,
+                                &measurement,
+                                &time_column,
+                                &time_format,
+                            )
                             .await
                         {
                             Ok(count) => {
                                 println!("Successfully imported {} data points to InfluxDB", count);
+
+                                // Update the import state
+                                if let Some(ts) = latest_timestamp {
+                                    import_state.last_imported_timestamp = Some(ts);
+                                    import_state.records_imported += filtered_records.len();
+
+                                    // Save the updated state
+                                    match save_import_state(&import_state, &state_file) {
+                                        Ok(_) => {
+                                            println!("Updated import state saved to {}", state_file)
+                                        }
+                                        Err(e) => eprintln!("Failed to save import state: {}", e),
+                                    }
+                                }
                             }
                             Err(e) => {
                                 eprintln!("Error writing to InfluxDB: {}", e);
