@@ -46,7 +46,7 @@ pub fn load_import_state(state_file: &str, source_file: &str) -> ImportState {
             }
         }
     }
-    
+
     // Return a new state if we couldn't load an existing one
     ImportState::new(source_file)
 }
