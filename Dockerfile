@@ -1,4 +1,4 @@
-FROM rust:1.71-slim-bullseye as builder
+FROM rust:1.86-slim-bullseye as builder
 
 # Create a new empty shell project
 WORKDIR /usr/src/home-db-importer
