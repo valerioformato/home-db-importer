@@ -88,6 +88,10 @@ enum Commands {
         #[arg(short, long, default_value = "http://localhost:8086")]
         url: String,
 
+        /// InfluxDB organization
+        #[arg(short, long)]
+        org: String,
+
         /// InfluxDB bucket/database
         #[arg(short, long)]
         bucket: String,
@@ -315,6 +319,7 @@ async fn main() {
             source,
             url,
             bucket,
+            org,
             token,
             state_file,
             force_all,
@@ -322,6 +327,7 @@ async fn main() {
         } => {
             println!("Importing health data from SQLite database: '{}'", source);
             println!("  URL: {}", url);
+            println!("  Organization: {}", org);
             println!("  Bucket: {}", bucket);
             println!("  Dry-run mode: {}", if dry_run { "ON" } else { "OFF" });
             println!("  State file: {}", state_file);
