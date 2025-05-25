@@ -20,3 +20,4 @@ target/
 
 /target
 Cargo.lock
+tests/*.db
