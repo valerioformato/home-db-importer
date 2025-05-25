@@ -427,7 +427,7 @@ impl HealthDataReader {
 
         let mut metadata = HashMap::new();
         metadata.insert("app_name".to_string(), app_name);
-        metadata.insert("unit".to_string(), "kg".to_string());
+        metadata.insert("unit".to_string(), "g".to_string());
 
         Ok(HealthRecord {
             record_type: "Weight".to_string(),
