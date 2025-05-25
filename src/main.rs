@@ -1,9 +1,11 @@
 use chrono::{DateTime, NaiveDateTime, Utc};
 use clap::{Parser, Subcommand};
 mod csv_parser;
+mod health_data;
 mod influx_client;
 mod state_management;
 use csv_parser::CsvParser;
+use health_data::HealthDataReader;
 use influx_client::InfluxClient;
 use state_management::{load_import_state, save_import_state};
 use std::process;
@@ -74,6 +76,37 @@ enum Commands {
         /// Force import all records, ignoring state file
         #[arg(long)]
         force_all: bool,
+    },
+
+    /// Import health data from a Health Connect SQLite export
+    ImportHealthData {
+        /// The SQLite database file to import
+        #[arg(short, long, required = true)]
+        source: String,
+
+        /// InfluxDB URL
+        #[arg(short, long, default_value = "http://localhost:8086")]
+        url: String,
+
+        /// InfluxDB bucket/database
+        #[arg(short, long)]
+        bucket: String,
+
+        /// InfluxDB token for authentication
+        #[arg(short, long)]
+        token: String,
+
+        /// State file to track last imported timestamp
+        #[arg(long, default_value = ".health_import_state.json")]
+        state_file: String,
+
+        /// Force import all records, ignoring state file
+        #[arg(long)]
+        force_all: bool,
+
+        /// Run in dry-run mode (don't write to InfluxDB, just show queries)
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Validate a CSV file format without importing
@@ -278,6 +311,41 @@ async fn main() {
             }
         }
 
+        Commands::ImportHealthData {
+            source,
+            url,
+            bucket,
+            token,
+            state_file,
+            force_all,
+            dry_run,
+        } => {
+            println!("Importing health data from SQLite database: '{}'", source);
+            println!("  URL: {}", url);
+            println!("  Bucket: {}", bucket);
+            println!("  Dry-run mode: {}", if dry_run { "ON" } else { "OFF" });
+            println!("  State file: {}", state_file);
+
+            // Load the import state
+            let mut import_state = load_import_state(&state_file, &source);
+
+            if force_all {
+                println!("Force import all records (--force-all flag is set)");
+                import_state.last_imported_timestamp = None;
+            } else if let Some(timestamp) = import_state.last_imported_timestamp {
+                println!("Skipping records before: {}", timestamp);
+                println!(
+                    "Previously imported: {} records",
+                    import_state.records_imported
+                );
+            } else {
+                println!("No previous import state found, importing all records");
+            }
+
+            // Just a placeholder for now - we'll implement the actual functionality in the next steps
+            println!("Health data import functionality coming soon!");
+        }
+
         Commands::ValidateCSV {
             source,
             details,
@@ -313,8 +381,6 @@ async fn main() {
         }
     }
 
-    // Debug info
-    if cli.debug > 0 {
-        println!("Debug mode is on (level: {})", cli.debug);
+    if cli.debug > 0 { // Debug info        println!("Debug mode is on (level: {})", cli.debug);
     }
 }
