@@ -170,6 +170,7 @@ impl InfluxClient {
         Ok(data_points)
     }
 
+    #[allow(dead_code)]
     /// Writes a data point to InfluxDB
     pub async fn write_point(&self, point: DataPoint) -> Result<String, Box<dyn Error>> {
         // Create a write query for the data point
@@ -219,10 +220,36 @@ impl InfluxClient {
             return Ok(());
         }
 
-        for point in points {
-            if let Err(e) = self.write_point(point.clone()).await {
-                eprintln!("Error writing point: {}", e);
-                return Err(e);
+        // Batch size - balance between performance and memory usage
+        // InfluxDB typically handles batches of up to 5000 points efficiently
+        const BATCH_SIZE: usize = 1000;
+
+        // Process points in batches to improve performance
+        for chunk in points.chunks(BATCH_SIZE) {
+            // Create a vector of write queries for this batch
+            let mut batch_queries = Vec::with_capacity(chunk.len());
+
+            for point in chunk {
+                // Create a write query for the data point
+                let mut write_query = Timestamp::from(point.time)
+                    .into_query(&point.measurement)
+                    .add_field("value", point.field_value);
+
+                // Add all tags to the query
+                for (tag_name, tag_value) in &point.tags {
+                    write_query = write_query.add_tag(tag_name, tag_value.clone());
+                }
+
+                batch_queries.push(write_query);
+            }
+
+            // Execute the batch write - the Vec<WriteQuery> is automatically handled by the client
+            match self.client.query(batch_queries).await {
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("Error writing batch to InfluxDB: {}", e);
+                    return Err(e.into());
+                }
             }
         }
 
