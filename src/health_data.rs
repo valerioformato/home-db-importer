@@ -12,9 +12,10 @@ pub struct HealthDataReader {
 /// Represents a health data record extracted from SQLite
 #[derive(Debug, Clone)]
 pub struct HealthRecord {
+    #[allow(dead_code)] // Used by InfluxClient when converting to data points
     pub record_type: String, // Type of health record (e.g., "HeartRate", "Steps")
     pub timestamp: DateTime<Utc>, // When the measurement was taken
-    pub value: f64,          // The measurement value
+    pub value: f64,               // The measurement value
     pub metadata: HashMap<String, String>, // Additional data like device info, etc.
 }
 
@@ -66,10 +67,8 @@ impl HealthDataReader {
                     ))
                 })?;
 
-                for column_result in columns {
-                    if let Ok((name, col_type)) = column_result {
-                        output.push_str(&format!("      {} ({})\n", name, col_type));
-                    }
+                for (name, col_type) in columns.flatten() {
+                    output.push_str(&format!("      {} ({})\n", name, col_type));
                 }
             }
 
@@ -136,7 +135,7 @@ impl HealthDataReader {
         };
 
         while let Some(row_result) = rows.next()? {
-            match self.map_heart_rate_row(&row_result) {
+            match self.map_heart_rate_row(row_result) {
                 Ok(record) => records.push(record),
                 Err(e) => eprintln!("Error reading heart rate record: {}", e),
             }
@@ -154,7 +153,7 @@ impl HealthDataReader {
         let timestamp = Utc
             .timestamp_millis_opt(time_millis)
             .single()
-            .unwrap_or_else(|| Utc::now());
+            .unwrap_or_else(Utc::now);
 
         let mut metadata = HashMap::new();
         metadata.insert("app_name".to_string(), app_name);
@@ -217,7 +216,7 @@ impl HealthDataReader {
         };
 
         while let Some(row_result) = rows.next()? {
-            match self.map_steps_row(&row_result) {
+            match self.map_steps_row(row_result) {
                 Ok(record) => records.push(record),
                 Err(e) => eprintln!("Error reading steps record: {}", e),
             }
@@ -235,7 +234,7 @@ impl HealthDataReader {
         let timestamp = Utc
             .timestamp_millis_opt(time_millis)
             .single()
-            .unwrap_or_else(|| Utc::now());
+            .unwrap_or_else(Utc::now);
 
         let mut metadata = HashMap::new();
         metadata.insert("app_name".to_string(), app_name);
@@ -300,7 +299,7 @@ impl HealthDataReader {
         };
 
         while let Some(row_result) = rows.next()? {
-            match self.map_sleep_row(&row_result) {
+            match self.map_sleep_row(row_result) {
                 Ok(record) => records.push(record),
                 Err(e) => eprintln!("Error reading sleep record: {}", e),
             }
@@ -319,12 +318,12 @@ impl HealthDataReader {
         let start_timestamp = Utc
             .timestamp_millis_opt(start_time_millis)
             .single()
-            .unwrap_or_else(|| Utc::now());
+            .unwrap_or_else(Utc::now);
 
         let end_timestamp = Utc
             .timestamp_millis_opt(end_time_millis)
             .single()
-            .unwrap_or_else(|| Utc::now());
+            .unwrap_or_else(Utc::now);
 
         // Calculate duration in minutes as the value
         let duration_millis = end_time_millis - start_time_millis;
@@ -406,7 +405,7 @@ impl HealthDataReader {
         };
 
         while let Some(row_result) = rows.next()? {
-            match self.map_weight_row(&row_result) {
+            match self.map_weight_row(row_result) {
                 Ok(record) => records.push(record),
                 Err(e) => eprintln!("Error reading weight record: {}", e),
             }
@@ -424,7 +423,7 @@ impl HealthDataReader {
         let timestamp = Utc
             .timestamp_millis_opt(time_millis)
             .single()
-            .unwrap_or_else(|| Utc::now());
+            .unwrap_or_else(Utc::now);
 
         let mut metadata = HashMap::new();
         metadata.insert("app_name".to_string(), app_name);
