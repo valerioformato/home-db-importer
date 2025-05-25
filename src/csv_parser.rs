@@ -355,14 +355,14 @@ impl CsvParser {
         let mut rdr = ReaderBuilder::new().has_headers(false).from_reader(file);
 
         // Count total rows
-        let mut row_count = 0;
+        let mut row_count: usize = 0;
         for result in rdr.records() {
             let _ = result?; // Just checking if we can read each record
             row_count += 1;
         }
 
         // Calculate data rows (total rows minus header rows)
-        let data_rows = if row_count >= self.header_rows {
+        let data_rows = if row_count.saturating_sub(self.header_rows) > 0 {
             row_count - self.header_rows
         } else {
             0
