@@ -111,6 +111,10 @@ enum Commands {
         /// Run in dry-run mode (don't write to InfluxDB, just show queries)
         #[arg(long)]
         dry_run: bool,
+
+        /// Only import specific data types (comma-separated). Available: HeartRate,Steps,Sleep,Weight,TotalCalories,BasalMetabolicRate,BodyFat,ExerciseSession
+        #[arg(long)]
+        data_types: Option<String>,
     },
 
     /// Validate a CSV file format without importing
@@ -324,6 +328,7 @@ async fn main() {
             state_file,
             force_all,
             dry_run,
+            data_types,
         } => {
             println!("Importing health data from SQLite database: '{}'", source);
             println!("  URL: {}", url);
@@ -331,6 +336,19 @@ async fn main() {
             println!("  Bucket: {}", bucket);
             println!("  Dry-run mode: {}", if dry_run { "ON" } else { "OFF" });
             println!("  State file: {}", state_file);
+
+            // Parse data types filter if provided
+            let requested_data_types = if let Some(data_types_str) = data_types {
+                let types: Vec<String> = data_types_str
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect();
+                println!("  Data types filter: {:?}", types);
+                Some(types)
+            } else {
+                println!("  Data types filter: All types");
+                None
+            };
 
             // Load the import state
             let mut import_state = load_import_state(&state_file, &source);
@@ -365,82 +383,94 @@ async fn main() {
 
             // Get health data since the last import timestamp
             println!("Retrieving health data...");
-            match reader.get_all_health_data_since(import_state.last_imported_timestamp) {
-                Ok(records_map) => {
-                    // Count total records
-                    let total_records: usize = records_map.values().map(|v| v.len()).sum();
-
-                    if total_records == 0 {
-                        println!("No new health records to import");
-                        return;
+            let records_map = if let Some(data_types_filter) = requested_data_types {
+                // Use filtered retrieval
+                match reader.get_filtered_health_data_since(import_state.last_imported_timestamp, &data_types_filter) {
+                    Ok(records) => records,
+                    Err(e) => {
+                        eprintln!("Error retrieving filtered health data: {}", e);
+                        process::exit(1);
                     }
-
-                    println!("Found {} health records to import:", total_records);
-                    for (record_type, records) in &records_map {
-                        println!("  - {}: {} records", record_type, records.len());
+                }
+            } else {
+                // Get all data types
+                match reader.get_all_health_data_since(import_state.last_imported_timestamp) {
+                    Ok(records) => records,
+                    Err(e) => {
+                        eprintln!("Error retrieving health data: {}", e);
+                        process::exit(1);
                     }
+                }
+            };
 
-                    // Find the latest timestamp across all records
-                    let mut latest_timestamp: Option<DateTime<Utc>> = None;
-                    for records in records_map.values() {
-                        for record in records {
-                            if latest_timestamp.is_none()
-                                || Some(record.timestamp) > latest_timestamp
-                            {
-                                latest_timestamp = Some(record.timestamp);
-                            }
-                        }
+            // Count total records
+            let total_records: usize = records_map.values().map(|v| v.len()).sum();
+
+            if total_records == 0 {
+                println!("No new health records to import");
+                return;
+            }
+
+            println!("Found {} health records to import:", total_records);
+            for (record_type, records) in &records_map {
+                println!("  - {}: {} records", record_type, records.len());
+            }
+
+            // Find the latest timestamp across all records
+            let mut latest_timestamp: Option<DateTime<Utc>> = None;
+            for records in records_map.values() {
+                for record in records {
+                    if latest_timestamp.is_none()
+                        || Some(record.timestamp) > latest_timestamp
+                    {
+                        latest_timestamp = Some(record.timestamp);
                     }
+                }
+            }
 
-                    // Create InfluxDB client (with dry-run mode if specified)
-                    let influx_client = if dry_run {
-                        InfluxClient::new_dry_run(&url, &bucket, &token)
+            // Create InfluxDB client (with dry-run mode if specified)
+            let influx_client = if dry_run {
+                InfluxClient::new_dry_run(&url, &bucket, &token)
+            } else {
+                InfluxClient::new(&url, &bucket, &token)
+            };
+
+            // Write the health records to InfluxDB
+            match influx_client.write_health_records(&records_map).await {
+                Ok(count) => {
+                    let mode_prefix = if dry_run {
+                        "Would have"
                     } else {
-                        InfluxClient::new(&url, &bucket, &token)
+                        "Successfully"
                     };
+                    println!(
+                        "{} imported {} health data points to InfluxDB",
+                        mode_prefix, count
+                    );
 
-                    // Write the health records to InfluxDB
-                    match influx_client.write_health_records(&records_map).await {
-                        Ok(count) => {
-                            let mode_prefix = if dry_run {
-                                "Would have"
-                            } else {
-                                "Successfully"
-                            };
-                            println!(
-                                "{} imported {} health data points to InfluxDB",
-                                mode_prefix, count
-                            );
+                    // Update and save the import state (unless in dry-run mode)
+                    if !dry_run {
+                        if let Some(ts) = latest_timestamp {
+                            import_state.last_imported_timestamp = Some(ts);
+                            import_state.records_imported += total_records;
 
-                            // Update and save the import state (unless in dry-run mode)
-                            if !dry_run {
-                                if let Some(ts) = latest_timestamp {
-                                    import_state.last_imported_timestamp = Some(ts);
-                                    import_state.records_imported += total_records;
-
-                                    // Save the updated state
-                                    match save_import_state(&import_state, &state_file) {
-                                        Ok(_) => {
-                                            println!("Updated import state saved to {}", state_file)
-                                        }
-                                        Err(e) => eprintln!("Failed to save import state: {}", e),
-                                    }
+                            // Save the updated state
+                            match save_import_state(&import_state, &state_file) {
+                                Ok(_) => {
+                                    println!("Updated import state saved to {}", state_file)
                                 }
-                            } else {
-                                println!("Dry-run mode: State file not updated");
-                                if let Some(ts) = latest_timestamp {
-                                    println!("Would update last imported timestamp to: {}", ts);
-                                }
+                                Err(e) => eprintln!("Failed to save import state: {}", e),
                             }
                         }
-                        Err(e) => {
-                            eprintln!("Error writing health data to InfluxDB: {}", e);
-                            process::exit(1);
+                    } else {
+                        println!("Dry-run mode: State file not updated");
+                        if let Some(ts) = latest_timestamp {
+                            println!("Would update last imported timestamp to: {}", ts);
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error retrieving health data: {}", e);
+                    eprintln!("Error writing health data to InfluxDB: {}", e);
                     process::exit(1);
                 }
             }

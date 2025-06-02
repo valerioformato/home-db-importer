@@ -53,32 +53,33 @@ impl HealthDataReader {
 
         let mut output = String::new();
         output.push_str(&format!("Database: {}\n", self.db_path));
-        // output.push_str(&format!("Found {} tables:\n", tables.len()));
+        output.push_str(&format!("Found {} tables:\n", tables.len()));
 
-        // for table in &tables {
-        //     output.push_str(&format!("  - {}\n", table));
+        // Check for specific tables and their record counts
+        let tables_to_check = [
+            "heart_rate_record_table",
+            "steps_record_table",
+            "sleep_session_record_table",
+            "weight_record_table",
+            "active_calories_burned_record_table",
+            "total_calories_burned_record_table",
+            "basal_metabolic_rate_record_table",
+            "body_fat_record_table",
+            "exercise_session_record_table",
+        ];
 
-        //     // Get column info for each table
-        //     if let Ok(mut pragma_stmt) = conn.prepare(&format!("PRAGMA table_info({})", table)) {
-        //         let columns = pragma_stmt.query_map([], |row| {
-        //             Ok((
-        //                 row.get::<_, String>(1)?, // column name
-        //                 row.get::<_, String>(2)?, // column type
-        //             ))
-        //         })?;
+        for table in &tables_to_check {
+            output.push_str(&format!("  - {}\n", table));
 
-        //         for (name, col_type) in columns.flatten() {
-        //             output.push_str(&format!("      {} ({})\n", name, col_type));
-        //         }
-        //     }
-
-        //     // Get sample record count
-        //     if let Ok(mut count_stmt) = conn.prepare(&format!("SELECT COUNT(*) FROM {}", table)) {
-        //         if let Ok(count) = count_stmt.query_row([], |row| row.get::<_, i64>(0)) {
-        //             output.push_str(&format!("      Records: {}\n", count));
-        //         }
-        //     }
-        // }
+            // Get sample record count
+            if let Ok(mut count_stmt) = conn.prepare(&format!("SELECT COUNT(*) FROM {}", table)) {
+                if let Ok(count) = count_stmt.query_row([], |row| row.get::<_, i64>(0)) {
+                    output.push_str(&format!("      Records: {}\n", count));
+                }
+            } else {
+                output.push_str("      Table does not exist or cannot be accessed\n");
+            }
+        }
 
         Ok(output)
     }
@@ -502,6 +503,451 @@ impl HealthDataReader {
         })
     }
 
+    /// Retrieves active calories data after a specific timestamp
+    pub fn get_active_calories_since(
+        &self,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<Vec<HealthRecord>, Box<dyn Error>> {
+        if !self.db_exists() {
+            return Err(format!("Database file does not exist: {}", self.db_path).into());
+        }
+
+        let conn = self.open_connection()?;
+        let mut records = Vec::new();
+
+        // Query for active calories records
+        let query = match since {
+            Some(timestamp) => {
+                let _unix_timestamp = timestamp.timestamp_millis();
+                "SELECT acb.start_time, acb.end_time, acb.energy, ai.app_name
+                 FROM active_calories_burned_record_table acb
+                 LEFT JOIN application_info_table ai ON acb.app_info_id = ai.row_id
+                 WHERE acb.start_time > ? 
+                 ORDER BY acb.start_time ASC"
+                    .to_string()
+            }
+            None => "SELECT acb.start_time, acb.end_time, acb.energy, ai.app_name
+                 FROM active_calories_burned_record_table acb
+                 LEFT JOIN application_info_table ai ON acb.app_info_id = ai.row_id
+                 ORDER BY acb.start_time ASC"
+                .to_string(),
+        };
+
+        let mut stmt = match conn.prepare(&query) {
+            Ok(stmt) => stmt,
+            Err(e) => {
+                // If the table doesn't exist yet, return empty results
+                if e.to_string().contains("no such table") {
+                    return Ok(Vec::new());
+                }
+                return Err(Box::new(e));
+            }
+        };
+
+        let mut rows = match since {
+            Some(timestamp) => {
+                let unix_timestamp = timestamp.timestamp_millis();
+                stmt.query([unix_timestamp])?
+            }
+            None => stmt.query([])?,
+        };
+
+        while let Some(row_result) = rows.next()? {
+            match self.map_active_calories_row(row_result) {
+                Ok(record) => records.push(record),
+                Err(e) => eprintln!("Error reading active calories record: {}", e),
+            }
+        }
+
+        Ok(records)
+    }
+
+    /// Maps a database row to an ActiveCalories HealthRecord
+    fn map_active_calories_row(&self, row: &Row) -> SqliteResult<HealthRecord> {
+        let start_time_millis: i64 = row.get(0)?;
+        let end_time_millis: i64 = row.get(1)?;
+        let energy_value: f64 = row.get(2)?;
+        let app_name: String = row.get(3).unwrap_or_else(|_| "unknown".to_string());
+
+        let timestamp = Utc
+            .timestamp_millis_opt(start_time_millis)
+            .single()
+            .unwrap_or_else(Utc::now);
+
+        // Calculate duration in minutes
+        let duration_millis = end_time_millis - start_time_millis;
+        let duration_minutes = duration_millis as f64 / (1000.0 * 60.0);
+
+        let mut metadata = HashMap::new();
+        metadata.insert("app_name".to_string(), app_name);
+        metadata.insert("unit".to_string(), "kcal".to_string());
+        metadata.insert("duration_minutes".to_string(), duration_minutes.to_string());
+        metadata.insert(
+            "end_time".to_string(),
+            Utc.timestamp_millis_opt(end_time_millis)
+                .single()
+                .unwrap_or_else(Utc::now)
+                .to_rfc3339(),
+        );
+
+        Ok(HealthRecord {
+            record_type: "ActiveCalories".to_string(),
+            timestamp,
+            value: energy_value,
+            metadata,
+        })
+    }
+
+    /// Retrieves total calories burned data after a specific timestamp
+    pub fn get_total_calories_since(
+        &self,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<Vec<HealthRecord>, Box<dyn Error>> {
+        if !self.db_exists() {
+            return Err(format!("Database file does not exist: {}", self.db_path).into());
+        }
+
+        let conn = self.open_connection()?;
+        let mut records = Vec::new();
+
+        // Query for total calories records
+        let query = match since {
+            Some(timestamp) => {
+                let _unix_timestamp = timestamp.timestamp_millis();
+                "SELECT tcb.start_time, tcb.end_time, tcb.energy, ai.app_name
+                 FROM total_calories_burned_record_table tcb
+                 LEFT JOIN application_info_table ai ON tcb.app_info_id = ai.row_id
+                 WHERE tcb.start_time > ? 
+                 ORDER BY tcb.start_time ASC"
+                    .to_string()
+            }
+            None => "SELECT tcb.start_time, tcb.end_time, tcb.energy, ai.app_name
+                 FROM total_calories_burned_record_table tcb
+                 LEFT JOIN application_info_table ai ON tcb.app_info_id = ai.row_id
+                 ORDER BY tcb.start_time ASC"
+                .to_string(),
+        };
+
+        let mut stmt = match conn.prepare(&query) {
+            Ok(stmt) => stmt,
+            Err(e) => {
+                // If the table doesn't exist yet, return empty results
+                if e.to_string().contains("no such table") {
+                    return Ok(Vec::new());
+                }
+                return Err(Box::new(e));
+            }
+        };
+
+        let mut rows = match since {
+            Some(timestamp) => {
+                let unix_timestamp = timestamp.timestamp_millis();
+                stmt.query([unix_timestamp])?
+            }
+            None => stmt.query([])?,
+        };
+
+        while let Some(row_result) = rows.next()? {
+            match self.map_total_calories_row(row_result) {
+                Ok(record) => records.push(record),
+                Err(e) => eprintln!("Error reading total calories record: {}", e),
+            }
+        }
+
+        Ok(records)
+    }
+
+    /// Maps a database row to a TotalCalories HealthRecord
+    fn map_total_calories_row(&self, row: &Row) -> SqliteResult<HealthRecord> {
+        let start_time_millis: i64 = row.get(0)?;
+        let end_time_millis: i64 = row.get(1)?;
+        let energy_value: f64 = row.get(2)?;
+        let app_name: String = row.get(3).unwrap_or_else(|_| "unknown".to_string());
+
+        let start_timestamp = Utc
+            .timestamp_millis_opt(start_time_millis)
+            .single()
+            .unwrap_or_else(Utc::now);
+
+        // Calculate duration in hours for metadata
+        let duration_millis = end_time_millis - start_time_millis;
+        let duration_hours = duration_millis as f64 / (1000.0 * 60.0 * 60.0);
+
+        let mut metadata = HashMap::new();
+        metadata.insert("app_name".to_string(), app_name);
+        metadata.insert("unit".to_string(), "calories".to_string());
+        metadata.insert("duration_hours".to_string(), duration_hours.to_string());
+        metadata.insert(
+            "start_time_millis".to_string(),
+            start_time_millis.to_string(),
+        );
+        metadata.insert("end_time_millis".to_string(), end_time_millis.to_string());
+
+        Ok(HealthRecord {
+            record_type: "TotalCalories".to_string(),
+            timestamp: start_timestamp,
+            value: energy_value,
+            metadata,
+        })
+    }
+
+    /// Retrieves basal metabolic rate data after a specific timestamp
+    pub fn get_basal_metabolic_rate_since(
+        &self,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<Vec<HealthRecord>, Box<dyn Error>> {
+        if !self.db_exists() {
+            return Err(format!("Database file does not exist: {}", self.db_path).into());
+        }
+
+        let conn = self.open_connection()?;
+        let mut records = Vec::new();
+
+        // Query for basal metabolic rate records
+        let query = match since {
+            Some(timestamp) => {
+                let _unix_timestamp = timestamp.timestamp_millis();
+                "SELECT bmr.time, bmr.basal_metabolic_rate, ai.app_name
+                 FROM basal_metabolic_rate_record_table bmr
+                 LEFT JOIN application_info_table ai ON bmr.app_info_id = ai.row_id
+                 WHERE bmr.time > ? 
+                 ORDER BY bmr.time ASC"
+                    .to_string()
+            }
+            None => "SELECT bmr.time, bmr.basal_metabolic_rate, ai.app_name
+                 FROM basal_metabolic_rate_record_table bmr
+                 LEFT JOIN application_info_table ai ON bmr.app_info_id = ai.row_id
+                 ORDER BY bmr.time ASC"
+                .to_string(),
+        };
+
+        let mut stmt = match conn.prepare(&query) {
+            Ok(stmt) => stmt,
+            Err(e) => {
+                // If the table doesn't exist yet, return empty results
+                if e.to_string().contains("no such table") {
+                    return Ok(Vec::new());
+                }
+                return Err(Box::new(e));
+            }
+        };
+
+        let mut rows = match since {
+            Some(timestamp) => {
+                let unix_timestamp = timestamp.timestamp_millis();
+                stmt.query([unix_timestamp])?
+            }
+            None => stmt.query([])?,
+        };
+
+        while let Some(row_result) = rows.next()? {
+            match self.map_basal_metabolic_rate_row(row_result) {
+                Ok(record) => records.push(record),
+                Err(e) => eprintln!("Error reading basal metabolic rate record: {}", e),
+            }
+        }
+
+        Ok(records)
+    }
+
+    /// Maps a database row to a BasalMetabolicRate HealthRecord
+    fn map_basal_metabolic_rate_row(&self, row: &Row) -> SqliteResult<HealthRecord> {
+        let time_millis: i64 = row.get(0)?;
+        let bmr_value: f64 = row.get(1)?;
+        let app_name: String = row.get(2).unwrap_or_else(|_| "unknown".to_string());
+
+        let timestamp = Utc
+            .timestamp_millis_opt(time_millis)
+            .single()
+            .unwrap_or_else(Utc::now);
+
+        let mut metadata = HashMap::new();
+        metadata.insert("app_name".to_string(), app_name);
+        metadata.insert("unit".to_string(), "calories_per_day".to_string());
+
+        Ok(HealthRecord {
+            record_type: "BasalMetabolicRate".to_string(),
+            timestamp,
+            value: bmr_value,
+            metadata,
+        })
+    }
+
+    /// Retrieves body fat percentage data after a specific timestamp
+    pub fn get_body_fat_since(
+        &self,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<Vec<HealthRecord>, Box<dyn Error>> {
+        if !self.db_exists() {
+            return Err(format!("Database file does not exist: {}", self.db_path).into());
+        }
+
+        let conn = self.open_connection()?;
+        let mut records = Vec::new();
+
+        // Query for body fat records
+        let query = match since {
+            Some(timestamp) => {
+                let _unix_timestamp = timestamp.timestamp_millis();
+                "SELECT bf.time, bf.percentage, ai.app_name
+                 FROM body_fat_record_table bf
+                 LEFT JOIN application_info_table ai ON bf.app_info_id = ai.row_id
+                 WHERE bf.time > ? 
+                 ORDER BY bf.time ASC"
+                    .to_string()
+            }
+            None => "SELECT bf.time, bf.percentage, ai.app_name
+                 FROM body_fat_record_table bf
+                 LEFT JOIN application_info_table ai ON bf.app_info_id = ai.row_id
+                 ORDER BY bf.time ASC"
+                .to_string(),
+        };
+
+        let mut stmt = match conn.prepare(&query) {
+            Ok(stmt) => stmt,
+            Err(e) => {
+                // If the table doesn't exist yet, return empty results
+                if e.to_string().contains("no such table") {
+                    return Ok(Vec::new());
+                }
+                return Err(Box::new(e));
+            }
+        };
+
+        let mut rows = match since {
+            Some(timestamp) => {
+                let unix_timestamp = timestamp.timestamp_millis();
+                stmt.query([unix_timestamp])?
+            }
+            None => stmt.query([])?,
+        };
+
+        while let Some(row_result) = rows.next()? {
+            match self.map_body_fat_row(row_result) {
+                Ok(record) => records.push(record),
+                Err(e) => eprintln!("Error reading body fat record: {}", e),
+            }
+        }
+
+        Ok(records)
+    }
+
+    /// Maps a database row to a BodyFat HealthRecord
+    fn map_body_fat_row(&self, row: &Row) -> SqliteResult<HealthRecord> {
+        let time_millis: i64 = row.get(0)?;
+        let percentage_value: f64 = row.get(1)?;
+        let app_name: String = row.get(2).unwrap_or_else(|_| "unknown".to_string());
+
+        let timestamp = Utc
+            .timestamp_millis_opt(time_millis)
+            .single()
+            .unwrap_or_else(Utc::now);
+
+        let mut metadata = HashMap::new();
+        metadata.insert("app_name".to_string(), app_name);
+        metadata.insert("unit".to_string(), "percentage".to_string());
+
+        Ok(HealthRecord {
+            record_type: "BodyFat".to_string(),
+            timestamp,
+            value: percentage_value,
+            metadata,
+        })
+    }
+
+    /// Retrieves exercise session data after a specific timestamp
+    pub fn get_exercise_sessions_since(
+        &self,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<Vec<HealthRecord>, Box<dyn Error>> {
+        if !self.db_exists() {
+            return Err(format!("Database file does not exist: {}", self.db_path).into());
+        }
+
+        let conn = self.open_connection()?;
+        let mut records = Vec::new();
+
+        // Query for exercise session records
+        let query = match since {
+            Some(timestamp) => {
+                let _unix_timestamp = timestamp.timestamp_millis();
+                "SELECT es.start_time, es.end_time, es.exercise_type, es.title, ai.app_name
+                 FROM exercise_session_record_table es
+                 LEFT JOIN application_info_table ai ON es.app_info_id = ai.row_id
+                 WHERE es.start_time > ? 
+                 ORDER BY es.start_time ASC"
+                    .to_string()
+            }
+            None => "SELECT es.start_time, es.end_time, es.exercise_type, es.title, ai.app_name
+                 FROM exercise_session_record_table es
+                 LEFT JOIN application_info_table ai ON es.app_info_id = ai.row_id
+                 ORDER BY es.start_time ASC"
+                .to_string(),
+        };
+
+        let mut stmt = match conn.prepare(&query) {
+            Ok(stmt) => stmt,
+            Err(e) => {
+                // If the table doesn't exist yet, return empty results
+                if e.to_string().contains("no such table") {
+                    return Ok(Vec::new());
+                }
+                return Err(Box::new(e));
+            }
+        };
+
+        let mut rows = match since {
+            Some(timestamp) => {
+                let unix_timestamp = timestamp.timestamp_millis();
+                stmt.query([unix_timestamp])?
+            }
+            None => stmt.query([])?,
+        };
+
+        while let Some(row_result) = rows.next()? {
+            match self.map_exercise_session_row(row_result) {
+                Ok(record) => records.push(record),
+                Err(e) => eprintln!("Error reading exercise session record: {}", e),
+            }
+        }
+
+        Ok(records)
+    }
+
+    /// Maps a database row to an ExerciseSession HealthRecord
+    fn map_exercise_session_row(&self, row: &Row) -> SqliteResult<HealthRecord> {
+        let start_time_millis: i64 = row.get(0)?;
+        let end_time_millis: i64 = row.get(1)?;
+        let exercise_type: i64 = row.get(2)?;
+        let title: String = row.get(3).unwrap_or_else(|_| "Unknown".to_string());
+        let app_name: String = row.get(4).unwrap_or_else(|_| "unknown".to_string());
+
+        let start_timestamp = Utc
+            .timestamp_millis_opt(start_time_millis)
+            .single()
+            .unwrap_or_else(Utc::now);
+
+        // Calculate duration in minutes
+        let duration_millis = end_time_millis - start_time_millis;
+        let duration_minutes = duration_millis as f64 / (1000.0 * 60.0);
+
+        let mut metadata = HashMap::new();
+        metadata.insert("app_name".to_string(), app_name);
+        metadata.insert("exercise_type".to_string(), exercise_type.to_string());
+        metadata.insert("title".to_string(), title);
+        metadata.insert("duration_minutes".to_string(), duration_minutes.to_string());
+        metadata.insert("start_time_millis".to_string(), start_time_millis.to_string());
+        metadata.insert("end_time_millis".to_string(), end_time_millis.to_string());
+        metadata.insert("unit".to_string(), "minutes".to_string());
+
+        Ok(HealthRecord {
+            record_type: "ExerciseSession".to_string(),
+            timestamp: start_timestamp,
+            value: duration_minutes, // Use duration as the value for visualization
+            metadata,
+        })
+    }
+
     /// Gets all available health data since a specific timestamp
     pub fn get_all_health_data_since(
         &self,
@@ -572,7 +1018,204 @@ impl HealthDataReader {
             Err(e) => eprintln!("Error fetching weight data: {}", e),
         }
 
-        // Add more data types as needed
+        // Get active calories data
+        match self.get_active_calories_since(since) {
+            Ok(records) => {
+                if !records.is_empty() {
+                    all_data.insert("ActiveCalories".to_string(), records);
+                }
+            }
+            Err(e) => eprintln!("Error fetching active calories data: {}", e),
+        }
+
+        // Get total calories data
+        match self.get_total_calories_since(since) {
+            Ok(records) => {
+                if !records.is_empty() {
+                    all_data.insert("TotalCalories".to_string(), records);
+                }
+            }
+            Err(e) => eprintln!("Error fetching total calories data: {}", e),
+        }
+
+        // Get basal metabolic rate data
+        match self.get_basal_metabolic_rate_since(since) {
+            Ok(records) => {
+                if !records.is_empty() {
+                    all_data.insert("BasalMetabolicRate".to_string(), records);
+                }
+            }
+            Err(e) => eprintln!("Error fetching basal metabolic rate data: {}", e),
+        }
+
+        // Get body fat data
+        match self.get_body_fat_since(since) {
+            Ok(records) => {
+                if !records.is_empty() {
+                    all_data.insert("BodyFat".to_string(), records);
+                }
+            }
+            Err(e) => eprintln!("Error fetching body fat data: {}", e),
+        }
+
+        // Get exercise session data
+        match self.get_exercise_sessions_since(since) {
+            Ok(records) => {
+                if !records.is_empty() {
+                    all_data.insert("ExerciseSession".to_string(), records);
+                }
+            }
+            Err(e) => eprintln!("Error fetching exercise session data: {}", e),
+        }
+
+        Ok(all_data)
+    }
+
+    /// Gets health data for specific data types since a specific timestamp
+    /// data_types: List of data types to include (e.g., ["HeartRate", "Steps", "TotalCalories"])
+    /// Available types: HeartRate, Steps, Sleep, SleepDuration, SleepState, Weight, ActiveCalories, TotalCalories, BasalMetabolicRate, BodyFat, ExerciseSession
+    pub fn get_filtered_health_data_since(
+        &self,
+        since: Option<DateTime<Utc>>,
+        data_types: &[String],
+    ) -> Result<HashMap<String, Vec<HealthRecord>>, Box<dyn Error>> {
+        let mut all_data = HashMap::new();
+
+        // Helper function to check if a data type should be included
+        let should_include = |data_type: &str| -> bool {
+            data_types.iter().any(|dt| dt.eq_ignore_ascii_case(data_type))
+        };
+
+        // Get heart rate data
+        if should_include("HeartRate") {
+            match self.get_heart_rate_since(since) {
+                Ok(records) => {
+                    if !records.is_empty() {
+                        all_data.insert("HeartRate".to_string(), records);
+                    }
+                }
+                Err(e) => eprintln!("Error fetching heart rate data: {}", e),
+            }
+        }
+
+        // Get steps data
+        if should_include("Steps") {
+            match self.get_steps_since(since) {
+                Ok(records) => {
+                    if !records.is_empty() {
+                        all_data.insert("Steps".to_string(), records);
+                    }
+                }
+                Err(e) => eprintln!("Error fetching steps data: {}", e),
+            }
+        }
+
+        // Get sleep data - this includes multiple record types
+        if should_include("Sleep") || should_include("SleepDuration") || should_include("SleepState") {
+            match self.get_sleep_since(since) {
+                Ok(records) => {
+                    if !records.is_empty() {
+                        // Split sleep records by record_type
+                        let mut sleep_records = Vec::new();
+                        let mut sleep_duration_records = Vec::new();
+                        let mut sleep_state_records = Vec::new();
+
+                        for record in records {
+                            match record.record_type.as_str() {
+                                "Sleep" => sleep_records.push(record),
+                                "SleepDuration" => sleep_duration_records.push(record),
+                                "SleepState" => sleep_state_records.push(record),
+                                _ => sleep_records.push(record), // Default case
+                            }
+                        }
+
+                        // Add each record type to the map based on what was requested
+                        if should_include("Sleep") && !sleep_records.is_empty() {
+                            all_data.insert("Sleep".to_string(), sleep_records);
+                        }
+                        if should_include("SleepDuration") && !sleep_duration_records.is_empty() {
+                            all_data.insert("SleepDuration".to_string(), sleep_duration_records);
+                        }
+                        if should_include("SleepState") && !sleep_state_records.is_empty() {
+                            all_data.insert("SleepState".to_string(), sleep_state_records);
+                        }
+                    }
+                }
+                Err(e) => eprintln!("Error fetching sleep data: {}", e),
+            }
+        }
+
+        // Get weight data
+        if should_include("Weight") {
+            match self.get_weight_since(since) {
+                Ok(records) => {
+                    if !records.is_empty() {
+                        all_data.insert("Weight".to_string(), records);
+                    }
+                }
+                Err(e) => eprintln!("Error fetching weight data: {}", e),
+            }
+        }
+
+        // Get active calories data
+        if should_include("ActiveCalories") {
+            match self.get_active_calories_since(since) {
+                Ok(records) => {
+                    if !records.is_empty() {
+                        all_data.insert("ActiveCalories".to_string(), records);
+                    }
+                }
+                Err(e) => eprintln!("Error fetching active calories data: {}", e),
+            }
+        }
+
+        // Get total calories data
+        if should_include("TotalCalories") {
+            match self.get_total_calories_since(since) {
+                Ok(records) => {
+                    if !records.is_empty() {
+                        all_data.insert("TotalCalories".to_string(), records);
+                    }
+                }
+                Err(e) => eprintln!("Error fetching total calories data: {}", e),
+            }
+        }
+
+        // Get basal metabolic rate data
+        if should_include("BasalMetabolicRate") {
+            match self.get_basal_metabolic_rate_since(since) {
+                Ok(records) => {
+                    if !records.is_empty() {
+                        all_data.insert("BasalMetabolicRate".to_string(), records);
+                    }
+                }
+                Err(e) => eprintln!("Error fetching basal metabolic rate data: {}", e),
+            }
+        }
+
+        // Get body fat data
+        if should_include("BodyFat") {
+            match self.get_body_fat_since(since) {
+                Ok(records) => {
+                    if !records.is_empty() {
+                        all_data.insert("BodyFat".to_string(), records);
+                    }
+                }
+                Err(e) => eprintln!("Error fetching body fat data: {}", e),
+            }
+        }
+
+        // Get exercise session data
+        if should_include("ExerciseSession") {
+            match self.get_exercise_sessions_since(since) {
+                Ok(records) => {
+                    if !records.is_empty() {
+                        all_data.insert("ExerciseSession".to_string(), records);
+                    }
+                }
+                Err(e) => eprintln!("Error fetching exercise session data: {}", e),
+            }
+        }
 
         Ok(all_data)
     }

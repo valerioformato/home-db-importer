@@ -55,6 +55,10 @@ The following Health Connect data types are supported:
 - Steps
 - Sleep (with stage detection: AWAKE, LIGHT, DEEP, REM)
 - Weight
+- Total Calories Burned
+- Basal Metabolic Rate
+- Body Fat Percentage
+- Exercise Sessions
 
 ## License
 
