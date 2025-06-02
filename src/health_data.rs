@@ -53,32 +53,32 @@ impl HealthDataReader {
 
         let mut output = String::new();
         output.push_str(&format!("Database: {}\n", self.db_path));
-        output.push_str(&format!("Found {} tables:\n", tables.len()));
+        // output.push_str(&format!("Found {} tables:\n", tables.len()));
 
-        for table in &tables {
-            output.push_str(&format!("  - {}\n", table));
+        // for table in &tables {
+        //     output.push_str(&format!("  - {}\n", table));
 
-            // Get column info for each table
-            if let Ok(mut pragma_stmt) = conn.prepare(&format!("PRAGMA table_info({})", table)) {
-                let columns = pragma_stmt.query_map([], |row| {
-                    Ok((
-                        row.get::<_, String>(1)?, // column name
-                        row.get::<_, String>(2)?, // column type
-                    ))
-                })?;
+        //     // Get column info for each table
+        //     if let Ok(mut pragma_stmt) = conn.prepare(&format!("PRAGMA table_info({})", table)) {
+        //         let columns = pragma_stmt.query_map([], |row| {
+        //             Ok((
+        //                 row.get::<_, String>(1)?, // column name
+        //                 row.get::<_, String>(2)?, // column type
+        //             ))
+        //         })?;
 
-                for (name, col_type) in columns.flatten() {
-                    output.push_str(&format!("      {} ({})\n", name, col_type));
-                }
-            }
+        //         for (name, col_type) in columns.flatten() {
+        //             output.push_str(&format!("      {} ({})\n", name, col_type));
+        //         }
+        //     }
 
-            // Get sample record count
-            if let Ok(mut count_stmt) = conn.prepare(&format!("SELECT COUNT(*) FROM {}", table)) {
-                if let Ok(count) = count_stmt.query_row([], |row| row.get::<_, i64>(0)) {
-                    output.push_str(&format!("      Records: {}\n", count));
-                }
-            }
-        }
+        //     // Get sample record count
+        //     if let Ok(mut count_stmt) = conn.prepare(&format!("SELECT COUNT(*) FROM {}", table)) {
+        //         if let Ok(count) = count_stmt.query_row([], |row| row.get::<_, i64>(0)) {
+        //             output.push_str(&format!("      Records: {}\n", count));
+        //         }
+        //     }
+        // }
 
         Ok(output)
     }
@@ -300,7 +300,10 @@ impl HealthDataReader {
 
         while let Some(row_result) = rows.next()? {
             match self.map_sleep_row(row_result) {
-                Ok(record) => records.push(record),
+                Ok(stage_records) => {
+                    // Extend the records vec with all the records for this sleep stage
+                    records.extend(stage_records);
+                }
                 Err(e) => eprintln!("Error reading sleep record: {}", e),
             }
         }
@@ -308,8 +311,8 @@ impl HealthDataReader {
         Ok(records)
     }
 
-    /// Maps a database row to a Sleep HealthRecord
-    fn map_sleep_row(&self, row: &Row) -> SqliteResult<HealthRecord> {
+    /// Maps a database row to multiple Sleep HealthRecords (start and end points)
+    fn map_sleep_row(&self, row: &Row) -> SqliteResult<Vec<HealthRecord>> {
         let start_time_millis: i64 = row.get(0)?;
         let end_time_millis: i64 = row.get(1)?;
         let stage_type: i64 = row.get(2)?;
@@ -340,19 +343,81 @@ impl HealthDataReader {
             _ => "UNKNOWN",
         };
 
-        let mut metadata = HashMap::new();
-        metadata.insert("app_name".to_string(), app_name);
-        metadata.insert("stage".to_string(), stage_description.to_string());
-        metadata.insert("stage_type".to_string(), stage_type.to_string());
-        metadata.insert("start_time".to_string(), start_timestamp.to_rfc3339());
-        metadata.insert("end_time".to_string(), end_timestamp.to_rfc3339());
+        // Numeric value for the sleep stage (useful for visualization in Grafana)
+        let stage_value = match stage_type {
+            1 => 0.0,  // AWAKE
+            2 => 1.0,  // SLEEPING (generic)
+            3 => 0.0,  // OUT_OF_BED
+            4 => 2.0,  // LIGHT
+            5 => 3.0,  // DEEP
+            6 => 4.0,  // REM
+            _ => -1.0, // UNKNOWN
+        };
 
-        Ok(HealthRecord {
+        let mut results = Vec::new();
+
+        // Create metadata for the start point
+        let mut start_metadata = HashMap::new();
+        start_metadata.insert("app_name".to_string(), app_name.clone());
+        start_metadata.insert("stage".to_string(), stage_description.to_string());
+        start_metadata.insert("stage_type".to_string(), stage_type.to_string());
+        start_metadata.insert("event_type".to_string(), "start".to_string());
+        start_metadata.insert("duration_minutes".to_string(), duration_minutes.to_string());
+
+        // Start point - Main data point with stage value
+        results.push(HealthRecord {
             record_type: "Sleep".to_string(),
-            timestamp: start_timestamp, // Use start time as the primary timestamp
-            value: duration_minutes,    // Duration in minutes
-            metadata,
-        })
+            timestamp: start_timestamp,
+            value: stage_value, // Use stage value for visualization
+            metadata: start_metadata,
+        });
+
+        // Create metadata for the end point
+        let mut end_metadata = HashMap::new();
+        end_metadata.insert("app_name".to_string(), app_name.clone());
+        end_metadata.insert("stage".to_string(), stage_description.to_string());
+        end_metadata.insert("stage_type".to_string(), stage_type.to_string());
+        end_metadata.insert("event_type".to_string(), "end".to_string());
+        end_metadata.insert("duration_minutes".to_string(), duration_minutes.to_string());
+
+        // End point
+        results.push(HealthRecord {
+            record_type: "Sleep".to_string(),
+            timestamp: end_timestamp,
+            value: 0.0, // End of this sleep stage
+            metadata: end_metadata,
+        });
+
+        // Add a sleep session record with duration for Grafana
+        let mut duration_metadata = HashMap::new();
+        duration_metadata.insert("app_name".to_string(), app_name.clone());
+        duration_metadata.insert("stage".to_string(), stage_description.to_string());
+        duration_metadata.insert("stage_type".to_string(), stage_type.to_string());
+        duration_metadata.insert("record_subtype".to_string(), "duration".to_string());
+
+        // Additional point for duration - can be used with Grafana Bar Gauge
+        results.push(HealthRecord {
+            record_type: "SleepDuration".to_string(),
+            timestamp: start_timestamp,
+            value: duration_minutes, // Duration in minutes for bar charts
+            metadata: duration_metadata,
+        });
+
+        // Add a sleep state point for continuous state visualization
+        let mut state_metadata = HashMap::new();
+        state_metadata.insert("app_name".to_string(), app_name);
+        state_metadata.insert("stage".to_string(), stage_description.to_string());
+        state_metadata.insert("stage_type".to_string(), stage_type.to_string());
+
+        // State point for Grafana State Timeline visualization
+        results.push(HealthRecord {
+            record_type: "SleepState".to_string(),
+            timestamp: start_timestamp,
+            value: stage_value, // Numeric value representing the sleep stage
+            metadata: state_metadata,
+        });
+
+        Ok(results)
     }
 
     /// Retrieves weight data after a specific timestamp
@@ -464,11 +529,34 @@ impl HealthDataReader {
             Err(e) => eprintln!("Error fetching steps data: {}", e),
         }
 
-        // Get sleep data
+        // Get sleep data - this now includes multiple record types
         match self.get_sleep_since(since) {
             Ok(records) => {
                 if !records.is_empty() {
-                    all_data.insert("Sleep".to_string(), records);
+                    // Split sleep records by record_type
+                    let mut sleep_records = Vec::new();
+                    let mut sleep_duration_records = Vec::new();
+                    let mut sleep_state_records = Vec::new();
+
+                    for record in records {
+                        match record.record_type.as_str() {
+                            "Sleep" => sleep_records.push(record),
+                            "SleepDuration" => sleep_duration_records.push(record),
+                            "SleepState" => sleep_state_records.push(record),
+                            _ => sleep_records.push(record), // Default case
+                        }
+                    }
+
+                    // Add each record type to the map
+                    if !sleep_records.is_empty() {
+                        all_data.insert("Sleep".to_string(), sleep_records);
+                    }
+                    if !sleep_duration_records.is_empty() {
+                        all_data.insert("SleepDuration".to_string(), sleep_duration_records);
+                    }
+                    if !sleep_state_records.is_empty() {
+                        all_data.insert("SleepState".to_string(), sleep_state_records);
+                    }
                 }
             }
             Err(e) => eprintln!("Error fetching sleep data: {}", e),
