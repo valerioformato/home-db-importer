@@ -130,8 +130,7 @@ fn test_convert_funds_record_with_non_numeric_values() {
     assert_eq!(data_points.len(), 2); // Only two valid data points now
 
     // There should be no data point for the "price" measurement
-    assert!(!data_points
-        .iter().any(|p| p.measurement == "price"));
+    assert!(!data_points.iter().any(|p| p.measurement == "price"));
 }
 
 // Since we can't easily run async code in unit tests without setting up a runtime,
@@ -159,8 +158,10 @@ fn test_write_points_dry_run() {
     let client = InfluxClient::new_dry_run("http://localhost:8086", "bucket", "token");
 
     // Create sample data points
-    let points = [create_sample_datapoint("test1", 42.0, "2023-01-15 10:00:00"),
-        create_sample_datapoint("test2", 43.0, "2023-01-15 10:01:00")];
+    let points = [
+        create_sample_datapoint("test1", 42.0, "2023-01-15 10:00:00"),
+        create_sample_datapoint("test2", 43.0, "2023-01-15 10:01:00"),
+    ];
 
     // Verify the points are correctly created
     assert_eq!(points[0].measurement, "test1");
