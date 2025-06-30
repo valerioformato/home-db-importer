@@ -936,7 +936,10 @@ impl HealthDataReader {
         metadata.insert("exercise_type".to_string(), exercise_type.to_string());
         metadata.insert("title".to_string(), title);
         metadata.insert("duration_minutes".to_string(), duration_minutes.to_string());
-        metadata.insert("start_time_millis".to_string(), start_time_millis.to_string());
+        metadata.insert(
+            "start_time_millis".to_string(),
+            start_time_millis.to_string(),
+        );
         metadata.insert("end_time_millis".to_string(), end_time_millis.to_string());
         metadata.insert("unit".to_string(), "minutes".to_string());
 
@@ -1083,7 +1086,9 @@ impl HealthDataReader {
 
         // Helper function to check if a data type should be included
         let should_include = |data_type: &str| -> bool {
-            data_types.iter().any(|dt| dt.eq_ignore_ascii_case(data_type))
+            data_types
+                .iter()
+                .any(|dt| dt.eq_ignore_ascii_case(data_type))
         };
 
         // Get heart rate data
@@ -1111,7 +1116,10 @@ impl HealthDataReader {
         }
 
         // Get sleep data - this includes multiple record types
-        if should_include("Sleep") || should_include("SleepDuration") || should_include("SleepState") {
+        if should_include("Sleep")
+            || should_include("SleepDuration")
+            || should_include("SleepState")
+        {
             match self.get_sleep_since(since) {
                 Ok(records) => {
                     if !records.is_empty() {
@@ -1218,5 +1226,149 @@ impl HealthDataReader {
         }
 
         Ok(all_data)
+    }
+
+    /// Retrieves heart rate data with gap-filling for the last week
+    /// This method checks what data already exists in InfluxDB and only imports missing data points
+    pub async fn get_heart_rate_with_gap_filling(
+        &self,
+        influx_client: &crate::influx_client::InfluxClient,
+        days_back: i64,
+    ) -> Result<Vec<HealthRecord>, Box<dyn Error>> {
+        if !self.db_exists() {
+            return Err(format!("Database file does not exist: {}", self.db_path).into());
+        }
+
+        println!(
+            "Starting heart rate gap-filling for the last {} days",
+            days_back
+        );
+
+        // Get existing timestamps from InfluxDB
+        let existing_timestamps = influx_client
+            .get_existing_heart_rate_timestamps(days_back)
+            .await?;
+
+        let conn = self.open_connection()?;
+        let mut records = Vec::new();
+
+        // Calculate the time range for the last week
+        let end_time = Utc::now();
+        let start_time = end_time - chrono::Duration::days(days_back);
+        let start_timestamp_millis = start_time.timestamp_millis();
+
+        println!();
+        println!("📊 Heart Rate Gap-Filling Analysis");
+        println!("=====================================");
+        println!(
+            "Time range: {} to {} ({} days)",
+            start_time.format("%Y-%m-%d %H:%M:%S"),
+            end_time.format("%Y-%m-%d %H:%M:%S"),
+            days_back
+        );
+        println!("InfluxDB existing data points: {}", existing_timestamps.len());
+
+        // First, count total records in the time range to show progress
+        let count_query = "SELECT COUNT(*) FROM heart_rate_record_series_table hrs
+                          WHERE hrs.epoch_millis >= ?";
+        
+        let total_db_records = match conn.prepare(count_query) {
+            Ok(mut stmt) => {
+                match stmt.query_row([start_timestamp_millis], |row| row.get::<_, i64>(0)) {
+                    Ok(count) => count,
+                    Err(_) => 0,
+                }
+            }
+            Err(_) => 0,
+        };
+        
+        println!("SQLite database records (time range):   {}", total_db_records);
+        println!();
+        
+        if total_db_records == 0 {
+            println!("⚠️  No heart rate data found in SQLite database for the specified time range");
+            return Ok(Vec::new());
+        }
+        
+        println!("🔍 Processing records and checking for gaps...");
+
+        // Query for heart rate records from the last week
+        let query = "SELECT hrs.epoch_millis, hrs.beats_per_minute, ai.app_name
+                     FROM heart_rate_record_series_table hrs
+                     LEFT JOIN heart_rate_record_table hrr ON hrs.parent_key = hrr.row_id
+                     LEFT JOIN application_info_table ai ON hrr.app_info_id = ai.row_id
+                     WHERE hrs.epoch_millis >= ?
+                     ORDER BY hrs.epoch_millis ASC";
+
+        let mut stmt = match conn.prepare(query) {
+            Ok(stmt) => stmt,
+            Err(e) => {
+                // If the table doesn't exist, return empty results
+                if e.to_string().contains("no such table") {
+                    println!("Heart rate table not found in database");
+                    return Ok(Vec::new());
+                }
+                return Err(Box::new(e));
+            }
+        };
+
+        let mut rows = stmt.query([start_timestamp_millis])?;
+        let mut total_count = 0;
+        let mut new_count = 0;
+        let mut duplicate_count = 0;
+        let progress_interval = std::cmp::max(1, total_db_records / 10); // Show progress every 10%
+
+        while let Some(row_result) = rows.next()? {
+            total_count += 1;
+
+            // Show progress every 10% or for smaller datasets, every 1000 records
+            if total_count % progress_interval == 0 || total_count % 1000 == 0 {
+                let progress_percent = (total_count as f64 / total_db_records as f64) * 100.0;
+                println!("  Progress: {:.1}% ({}/{} records processed, {} gaps found so far)", 
+                    progress_percent, total_count, total_db_records, new_count);
+            }
+
+            // Get the timestamp from the row to check if it already exists
+            let time_millis: i64 = row_result.get(0)?;
+
+            // Check if this timestamp already exists in InfluxDB
+            if existing_timestamps.contains(&time_millis) {
+                duplicate_count += 1;
+                continue; // Skip this record as it already exists
+            }
+
+            // This is a new record, add it to the import list
+            match self.map_heart_rate_row(row_result) {
+                Ok(record) => {
+                    records.push(record);
+                    new_count += 1;
+                }
+                Err(e) => eprintln!("Error reading heart rate record: {}", e),
+            }
+        }
+
+        println!();
+        println!("📈 Gap-Filling Summary");
+        println!("======================");
+        println!("SQLite database records (last {} days): {}", days_back, total_count);
+        println!("InfluxDB existing records:               {}", duplicate_count);
+        println!("Gap-filled records to import:            {}", new_count);
+        println!();
+        
+        if total_count > 0 {
+            let coverage_percent = (duplicate_count as f64 / total_count as f64) * 100.0;
+            println!("📊 Data Coverage: {:.1}% ({} of {} records already in InfluxDB)", 
+                coverage_percent, duplicate_count, total_count);
+            
+            if new_count > 0 {
+                println!("🔄 Action: {} new records will be imported to fill gaps", new_count);
+            } else {
+                println!("✅ Action: No gaps found - all data is already in InfluxDB");
+            }
+        } else {
+            println!("⚠️  No heart rate data found in SQLite database for the specified time range");
+        }
+
+        Ok(records)
     }
 }

@@ -1,9 +1,9 @@
 use crate::csv_parser::CsvRecord;
 use crate::health_data::HealthRecord;
-use chrono::{DateTime, NaiveDateTime, Utc};
-use influxdb::{Client, InfluxDbWriteable, Timestamp};
+use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use influxdb::{Client, InfluxDbWriteable, ReadQuery, Timestamp};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 
 /// Represents a client for connecting to InfluxDB
@@ -349,5 +349,87 @@ impl InfluxClient {
         self.write_points(&all_points).await?;
 
         Ok(success_count)
+    }
+
+    /// Queries existing heart rate data from InfluxDB for the last week
+    /// Returns a set of timestamps (as Unix milliseconds) that already exist
+    pub async fn get_existing_heart_rate_timestamps(
+        &self,
+        days_back: i64,
+    ) -> Result<HashSet<i64>, Box<dyn Error>> {
+        let end_time = Utc::now();
+        let start_time = end_time - Duration::days(days_back);
+
+        // Convert to Unix timestamps in milliseconds
+        let start_timestamp = start_time.timestamp_millis();
+        let end_timestamp = end_time.timestamp_millis();
+
+        // InfluxQL query to get existing heart rate timestamps
+        let query = format!(
+            "SELECT time, value FROM \"HeartRate\" WHERE time >= {}ms AND time <= {}ms",
+            start_timestamp, end_timestamp
+        );
+
+        println!(
+            "Querying existing heart rate data from {} to {} ({} days)",
+            start_time.format("%Y-%m-%d %H:%M:%S"),
+            end_time.format("%Y-%m-%d %H:%M:%S"),
+            days_back
+        );
+
+        if self.dry_run {
+            println!("  (Dry-run mode: Querying InfluxDB for existing data, but won't write new data)");
+        }
+
+        let mut existing_timestamps = HashSet::new();
+
+        match self.client.json_query(ReadQuery::new(query)).await {
+            Ok(read_result) => {
+                // Check if there are results
+                for result in &read_result.results {
+                    if let Some(series_value) = result.get("series") {
+                        if let Some(series_array) = series_value.as_array() {
+                            for serie_value in series_array {
+                                if let Some(values_value) = serie_value.get("values") {
+                                    if let Some(values_array) = values_value.as_array() {
+                                        for value_row in values_array {
+                                            if let Some(value_array) = value_row.as_array() {
+                                                if let Some(timestamp_value) = value_array.get(0) {
+                                                    if let Some(timestamp_str) =
+                                                        timestamp_value.as_str()
+                                                    {
+                                                        // InfluxDB returns timestamps in RFC3339 format
+                                                        if let Ok(parsed_time) =
+                                                            DateTime::parse_from_rfc3339(
+                                                                timestamp_str,
+                                                            )
+                                                        {
+                                                            let timestamp_millis =
+                                                                parsed_time.timestamp_millis();
+                                                            existing_timestamps
+                                                                .insert(timestamp_millis);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                println!(
+                    "Found {} existing heart rate data points in InfluxDB",
+                    existing_timestamps.len()
+                );
+            }
+            Err(e) => {
+                println!("Warning: Failed to query existing heart rate data: {}", e);
+                println!("Proceeding with normal import (may result in duplicates)");
+            }
+        }
+
+        Ok(existing_timestamps)
     }
 }

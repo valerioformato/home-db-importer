@@ -8,6 +8,7 @@ use csv_parser::CsvParser;
 use health_data::HealthDataReader;
 use influx_client::InfluxClient;
 use state_management::{load_import_state, save_import_state};
+use std::collections::HashMap;
 use std::process;
 
 #[derive(Parser)]
@@ -115,6 +116,12 @@ enum Commands {
         /// Only import specific data types (comma-separated). Available: HeartRate,Steps,Sleep,Weight,TotalCalories,BasalMetabolicRate,BodyFat,ExerciseSession
         #[arg(long)]
         data_types: Option<String>,
+
+        /// Enable heart rate gap-filling mode (checks InfluxDB for existing data in the last N days and fills gaps).
+        /// Note: Gap-filling mode only imports heart rate data and does not update the state file.
+        /// Run normal sync first to update state, then use gap-filling as a maintenance operation.
+        #[arg(long)]
+        gap_fill_heart_rate: Option<i64>,
     },
 
     /// Validate a CSV file format without importing
@@ -329,6 +336,7 @@ async fn main() {
             force_all,
             dry_run,
             data_types,
+            gap_fill_heart_rate,
         } => {
             println!("Importing health data from SQLite database: '{}'", source);
             println!("  URL: {}", url);
@@ -381,11 +389,25 @@ async fn main() {
                 }
             }
 
+            // Create InfluxDB client early for gap-filling functionality
+            let influx_client = if dry_run {
+                InfluxClient::new_dry_run(&url, &bucket, &token)
+            } else {
+                InfluxClient::new(&url, &bucket, &token)
+            };
+
             // Get health data since the last import timestamp
             println!("Retrieving health data...");
-            let records_map = if let Some(data_types_filter) = requested_data_types {
+            let mut records_map = if let Some(_days_back) = gap_fill_heart_rate {
+                // Gap-filling mode: Only process heart rate data
+                println!("Gap-filling mode: Only importing heart rate data (assuming other data types are already synced)");
+                HashMap::new() // Start with empty map, will be populated by gap-filling
+            } else if let Some(data_types_filter) = requested_data_types {
                 // Use filtered retrieval
-                match reader.get_filtered_health_data_since(import_state.last_imported_timestamp, &data_types_filter) {
+                match reader.get_filtered_health_data_since(
+                    import_state.last_imported_timestamp,
+                    &data_types_filter,
+                ) {
                     Ok(records) => records,
                     Err(e) => {
                         eprintln!("Error retrieving filtered health data: {}", e);
@@ -402,6 +424,39 @@ async fn main() {
                     }
                 }
             };
+
+            // Handle heart rate gap-filling if requested
+            if let Some(days_back) = gap_fill_heart_rate {
+                println!(
+                    "\nHeart rate gap-filling enabled for the last {} days",
+                    days_back
+                );
+                println!("📋 Gap-filling mode: Only heart rate data will be imported");
+                println!("   (Other data types assumed to be already synced)");
+
+                match reader
+                    .get_heart_rate_with_gap_filling(&influx_client, days_back)
+                    .await
+                {
+                    Ok(gap_fill_records) => {
+                        if !gap_fill_records.is_empty() {
+                            println!(
+                                "✅ Adding {} gap-filled heart rate records",
+                                gap_fill_records.len()
+                            );
+                            // Add only the heart rate records with gap-filled data
+                            records_map.insert("HeartRate".to_string(), gap_fill_records);
+                        } else {
+                            println!("✅ No heart rate gaps found - all data is up to date");
+                            // Keep records_map empty since no gaps were found
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("❌ Heart rate gap-filling failed: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
 
             // Count total records
             let total_records: usize = records_map.values().map(|v| v.len()).sum();
@@ -420,20 +475,11 @@ async fn main() {
             let mut latest_timestamp: Option<DateTime<Utc>> = None;
             for records in records_map.values() {
                 for record in records {
-                    if latest_timestamp.is_none()
-                        || Some(record.timestamp) > latest_timestamp
-                    {
+                    if latest_timestamp.is_none() || Some(record.timestamp) > latest_timestamp {
                         latest_timestamp = Some(record.timestamp);
                     }
                 }
             }
-
-            // Create InfluxDB client (with dry-run mode if specified)
-            let influx_client = if dry_run {
-                InfluxClient::new_dry_run(&url, &bucket, &token)
-            } else {
-                InfluxClient::new(&url, &bucket, &token)
-            };
 
             // Write the health records to InfluxDB
             match influx_client.write_health_records(&records_map).await {
@@ -448,8 +494,8 @@ async fn main() {
                         mode_prefix, count
                     );
 
-                    // Update and save the import state (unless in dry-run mode)
-                    if !dry_run {
+                    // Update and save the import state (unless in dry-run mode or gap-filling mode)
+                    if !dry_run && gap_fill_heart_rate.is_none() {
                         if let Some(ts) = latest_timestamp {
                             import_state.last_imported_timestamp = Some(ts);
                             import_state.records_imported += total_records;
@@ -462,10 +508,16 @@ async fn main() {
                                 Err(e) => eprintln!("Failed to save import state: {}", e),
                             }
                         }
-                    } else {
+                    } else if dry_run {
                         println!("Dry-run mode: State file not updated");
                         if let Some(ts) = latest_timestamp {
                             println!("Would update last imported timestamp to: {}", ts);
+                        }
+                    } else if gap_fill_heart_rate.is_some() {
+                        println!("Gap-filling mode: State file not updated");
+                        println!("💡 Gap-filling is a maintenance operation - run normal sync first to update state");
+                        if let Some(ts) = latest_timestamp {
+                            println!("Latest gap-filled timestamp: {}", ts);
                         }
                     }
                 }
