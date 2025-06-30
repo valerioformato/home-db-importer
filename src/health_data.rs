@@ -1277,10 +1277,7 @@ impl HealthDataReader {
 
         let total_db_records = match conn.prepare(count_query) {
             Ok(mut stmt) => {
-                match stmt.query_row([start_timestamp_millis], |row| row.get::<_, i64>(0)) {
-                    Ok(count) => count,
-                    Err(_) => 0,
-                }
+                stmt.query_row([start_timestamp_millis], |row| row.get::<_, i64>(0)).unwrap_or(0)
             }
             Err(_) => 0,
         };

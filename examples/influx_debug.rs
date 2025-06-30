@@ -1,5 +1,5 @@
 // Debug tool to check what's actually in InfluxDB
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 use influxdb::{Client, ReadQuery};
 
 #[tokio::main]
@@ -49,7 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 if let Some(values_array) = values_value.as_array() {
                                     for value_row in values_array {
                                         if let Some(value_array) = value_row.as_array() {
-                                            if let Some(timestamp_value) = value_array.get(0) {
+                                            if let Some(timestamp_value) = value_array.first() {
                                                 if let Some(heart_rate_value) = value_array.get(1) {
                                                     record_count += 1;
                                                     println!(

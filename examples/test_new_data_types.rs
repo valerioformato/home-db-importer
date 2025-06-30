@@ -1,7 +1,7 @@
 // Simple example to test the new health data types
 // Since this is an external example, we'll import the necessary modules
 use chrono::{DateTime, TimeZone, Utc};
-use rusqlite::{Connection, Result as SqliteResult, Row};
+use rusqlite::{Connection, Result as SqliteResult};
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::Path;

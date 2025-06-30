@@ -1,5 +1,5 @@
 // Simple example to check heart rate table structure
-use rusqlite::{Connection, Result as SqliteResult};
+use rusqlite::Connection;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conn = Connection::open("tests/health_connect_export.db")?;

@@ -1,5 +1,5 @@
 // Simple tool to debug InfluxDB connection and query issues
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 use influxdb::{Client, ReadQuery};
 
 #[tokio::main]

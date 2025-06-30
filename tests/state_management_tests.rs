@@ -1,4 +1,4 @@
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{TimeZone, Utc};
 use home_db_importer::state_management::{load_import_state, save_import_state, ImportState};
 use std::fs::{self, File};
 use std::io::Write;

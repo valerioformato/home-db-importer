@@ -1,4 +1,4 @@
-use home_db_importer::csv_parser::{CsvParser, CsvRecord};
+use home_db_importer::csv_parser::CsvParser;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;

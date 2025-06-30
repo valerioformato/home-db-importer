@@ -396,7 +396,7 @@ impl InfluxClient {
                                     if let Some(values_array) = values_value.as_array() {
                                         for value_row in values_array {
                                             if let Some(value_array) = value_row.as_array() {
-                                                if let Some(timestamp_value) = value_array.get(0) {
+                                                if let Some(timestamp_value) = value_array.first() {
                                                     if let Some(timestamp_str) =
                                                         timestamp_value.as_str()
                                                     {
