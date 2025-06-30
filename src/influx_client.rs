@@ -378,7 +378,9 @@ impl InfluxClient {
         );
 
         if self.dry_run {
-            println!("  (Dry-run mode: Querying InfluxDB for existing data, but won't write new data)");
+            println!(
+                "  (Dry-run mode: Querying InfluxDB for existing data, but won't write new data)"
+            );
         }
 
         let mut existing_timestamps = HashSet::new();

@@ -1,10 +1,10 @@
 // Simple example to test the new health data types
 // Since this is an external example, we'll import the necessary modules
-use std::path::Path;
-use rusqlite::{Connection, Result as SqliteResult, Row};
 use chrono::{DateTime, TimeZone, Utc};
+use rusqlite::{Connection, Result as SqliteResult, Row};
 use std::collections::HashMap;
 use std::error::Error;
+use std::path::Path;
 
 // Copy the necessary structs and implementations for this example
 #[derive(Debug, Clone)]
@@ -58,7 +58,10 @@ impl HealthDataReader {
             let bmr_value: f64 = row_result.get(1)?;
             let app_name: String = row_result.get(2).unwrap_or_else(|_| "unknown".to_string());
 
-            let timestamp = Utc.timestamp_millis_opt(time_millis).single().unwrap_or_else(Utc::now);
+            let timestamp = Utc
+                .timestamp_millis_opt(time_millis)
+                .single()
+                .unwrap_or_else(Utc::now);
 
             let mut metadata = HashMap::new();
             metadata.insert("app_name".to_string(), app_name);
@@ -99,7 +102,10 @@ impl HealthDataReader {
             let percentage_value: f64 = row_result.get(1)?;
             let app_name: String = row_result.get(2).unwrap_or_else(|_| "unknown".to_string());
 
-            let timestamp = Utc.timestamp_millis_opt(time_millis).single().unwrap_or_else(Utc::now);
+            let timestamp = Utc
+                .timestamp_millis_opt(time_millis)
+                .single()
+                .unwrap_or_else(Utc::now);
 
             let mut metadata = HashMap::new();
             metadata.insert("app_name".to_string(), app_name);
@@ -142,7 +148,10 @@ impl HealthDataReader {
             let title: String = row_result.get(3).unwrap_or_else(|_| "Unknown".to_string());
             let app_name: String = row_result.get(4).unwrap_or_else(|_| "unknown".to_string());
 
-            let start_timestamp = Utc.timestamp_millis_opt(start_time_millis).single().unwrap_or_else(Utc::now);
+            let start_timestamp = Utc
+                .timestamp_millis_opt(start_time_millis)
+                .single()
+                .unwrap_or_else(Utc::now);
 
             let duration_millis = end_time_millis - start_time_millis;
             let duration_minutes = duration_millis as f64 / (1000.0 * 60.0);
@@ -168,9 +177,9 @@ impl HealthDataReader {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let reader = HealthDataReader::new("tests/health_connect_export.db");
-    
+
     println!("Testing new health data types...\n");
-    
+
     // Test Basal Metabolic Rate
     println!("=== Basal Metabolic Rate ===");
     match reader.get_basal_metabolic_rate_since(None) {
@@ -186,7 +195,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => println!("Error: {}", e),
     }
-    
+
     // Test Body Fat
     println!("\n=== Body Fat ===");
     match reader.get_body_fat_since(None) {
@@ -202,7 +211,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => println!("Error: {}", e),
     }
-    
+
     // Test Exercise Sessions
     println!("\n=== Exercise Sessions ===");
     match reader.get_exercise_sessions_since(None) {
@@ -218,6 +227,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => println!("Error: {}", e),
     }
-    
+
     Ok(())
 }

@@ -1266,12 +1266,15 @@ impl HealthDataReader {
             end_time.format("%Y-%m-%d %H:%M:%S"),
             days_back
         );
-        println!("InfluxDB existing data points: {}", existing_timestamps.len());
+        println!(
+            "InfluxDB existing data points: {}",
+            existing_timestamps.len()
+        );
 
         // First, count total records in the time range to show progress
         let count_query = "SELECT COUNT(*) FROM heart_rate_record_series_table hrs
                           WHERE hrs.epoch_millis >= ?";
-        
+
         let total_db_records = match conn.prepare(count_query) {
             Ok(mut stmt) => {
                 match stmt.query_row([start_timestamp_millis], |row| row.get::<_, i64>(0)) {
@@ -1281,15 +1284,20 @@ impl HealthDataReader {
             }
             Err(_) => 0,
         };
-        
-        println!("SQLite database records (time range):   {}", total_db_records);
+
+        println!(
+            "SQLite database records (time range):   {}",
+            total_db_records
+        );
         println!();
-        
+
         if total_db_records == 0 {
-            println!("⚠️  No heart rate data found in SQLite database for the specified time range");
+            println!(
+                "⚠️  No heart rate data found in SQLite database for the specified time range"
+            );
             return Ok(Vec::new());
         }
-        
+
         println!("🔍 Processing records and checking for gaps...");
 
         // Query for heart rate records from the last week
@@ -1324,8 +1332,10 @@ impl HealthDataReader {
             // Show progress every 10% or for smaller datasets, every 1000 records
             if total_count % progress_interval == 0 || total_count % 1000 == 0 {
                 let progress_percent = (total_count as f64 / total_db_records as f64) * 100.0;
-                println!("  Progress: {:.1}% ({}/{} records processed, {} gaps found so far)", 
-                    progress_percent, total_count, total_db_records, new_count);
+                println!(
+                    "  Progress: {:.1}% ({}/{} records processed, {} gaps found so far)",
+                    progress_percent, total_count, total_db_records, new_count
+                );
             }
 
             // Get the timestamp from the row to check if it already exists
@@ -1350,23 +1360,36 @@ impl HealthDataReader {
         println!();
         println!("📈 Gap-Filling Summary");
         println!("======================");
-        println!("SQLite database records (last {} days): {}", days_back, total_count);
-        println!("InfluxDB existing records:               {}", duplicate_count);
+        println!(
+            "SQLite database records (last {} days): {}",
+            days_back, total_count
+        );
+        println!(
+            "InfluxDB existing records:               {}",
+            duplicate_count
+        );
         println!("Gap-filled records to import:            {}", new_count);
         println!();
-        
+
         if total_count > 0 {
             let coverage_percent = (duplicate_count as f64 / total_count as f64) * 100.0;
-            println!("📊 Data Coverage: {:.1}% ({} of {} records already in InfluxDB)", 
-                coverage_percent, duplicate_count, total_count);
-            
+            println!(
+                "📊 Data Coverage: {:.1}% ({} of {} records already in InfluxDB)",
+                coverage_percent, duplicate_count, total_count
+            );
+
             if new_count > 0 {
-                println!("🔄 Action: {} new records will be imported to fill gaps", new_count);
+                println!(
+                    "🔄 Action: {} new records will be imported to fill gaps",
+                    new_count
+                );
             } else {
                 println!("✅ Action: No gaps found - all data is already in InfluxDB");
             }
         } else {
-            println!("⚠️  No heart rate data found in SQLite database for the specified time range");
+            println!(
+                "⚠️  No heart rate data found in SQLite database for the specified time range"
+            );
         }
 
         Ok(records)
